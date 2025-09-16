@@ -1,0 +1,14 @@
+[package]
+name = "llama-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+llama-sys = { path = "../llama-sys" }
+num_cpus = "1.16"
+once_cell = "1.21.3"
+
+[features]
+ffi-trace = []
+default = []
+utf8-trace = []
