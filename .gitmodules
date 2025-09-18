@@ -1,4 +1,0 @@
-[submodule "crates/backends/llama/llama-sys/llama.cpp"]
-	path = crates/backends/llama/llama-sys/llama.cpp
-	url = https://github.com/ggerganov/llama.cpp.git
-    branch = master

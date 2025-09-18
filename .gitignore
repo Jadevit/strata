@@ -53,12 +53,7 @@ apps/desktop/src-tauri/resources/models/
 .env.*
 
 # llama.cpp build outputs (vendored in llama-sys)
-crates/backends/llama/llama-sys/llama.cpp/build/
-crates/backends/llama/llama-sys/llama.cpp/bin/
-crates/backends/llama/llama-sys/llama.cpp/*.exe
-crates/backends/llama/llama-sys/llama.cpp/*.dll
-crates/backends/llama/llama-sys/llama.cpp/*.so
-crates/backends/llama/llama-sys/llama.cpp/*.dylib
+crates/backends/llama/llama-sys/llama.cpp/
 
 # Scripts
 branch.sh
