@@ -1,0 +1,105 @@
+name: Dev Build & Publish Runtime Packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Folder name under runtimes/* (e.g. v0.0.0-dev). If empty, a timestamped dev label is used."
+        required: false
+      channel:
+        description: "Top-level channel (usually 'latest')"
+        type: choice
+        options: [latest, testing]
+        default: latest
+        required: true
+      wipe_channel:
+        description: "Replace channel contents before publishing"
+        type: choice
+        options: ["yes", "no"]
+        default: "yes"
+        required: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/runtime-packs.yaml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout runtimes repo
+        uses: actions/checkout@v4
+        with:
+          repository: Jadevit/strata-runtimes
+          token: ${{ secrets.RUNTIME_REPO_PAT }}   # or your GitHub App token secret
+          fetch-depth: 0
+
+      - name: Download build artifacts (flat)
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Stage into runtimes layout + manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="dev-$(date -u +%Y%m%d-%H%M%S)"
+          fi
+          CHANNEL="${{ github.event.inputs.channel }}"
+          [ -z "$CHANNEL" ] && CHANNEL="latest"
+
+          # Prepare folders
+          mkdir -p runtimes/archives/"$VERSION"
+          if [ "${{ github.event.inputs.wipe_channel }}" = "yes" ]; then
+            rm -rf "runtimes/$CHANNEL"
+          fi
+          mkdir -p "runtimes/$CHANNEL/$VERSION"
+
+          # Copy artifacts to both places
+          shopt -s nullglob
+          for f in artifacts/*; do
+            cp -v "$f" "runtimes/archives/$VERSION/"
+            cp -v "$f" "runtimes/$CHANNEL/$VERSION/"
+          done
+
+          # Build manifest pointing at channel/$VERSION
+          MAN="runtimes/$CHANNEL/manifest.json"
+          echo '{ "llama": [' > "$MAN"
+          first=1
+          for z in runtimes/$CHANNEL/"$VERSION"/strata-llama-*.zip; do
+            base="$(basename "$z")"
+            core="${base%.zip}"  # strata-llama-<arch>-<variant>-<os>
+            IFS='-' read -r _ _ arch variant os <<< "$core"
+
+            sha_file="runtimes/$CHANNEL/$VERSION/${base}.sha256"
+            if [[ -f "$sha_file" ]]; then
+              sha="$(awk '{print $1}' "$sha_file")"
+            else
+              if command -v shasum >/dev/null 2>&1; then
+                sha="$(shasum -a 256 "$z" | awk '{print $1}')"
+              else
+                sha="$(sha256sum "$z" | awk '{print $1}')"
+              fi
+              echo "$sha  $base" > "$sha_file"
+            fi
+
+            url="https://raw.githubusercontent.com/Jadevit/strata-runtimes/main/runtimes/$CHANNEL/$VERSION/$base"
+            [[ $first -eq 0 ]] && echo ',' >> "$MAN"
+            first=0
+            printf '  {"name":"%s","sha256":"%s","os":"%s","arch":"%s","variant":"%s","url":"%s"}' \
+              "$base" "$sha" "$os" "$arch" "$variant" "$url" >> "$MAN"
+          done
+          echo '' >> "$MAN"
+          echo '] }' >> "$MAN"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add runtimes/
+          git commit -m "Dev publish $VERSION to $CHANNEL" || echo "No changes"
+          git push origin main

@@ -1,0 +1,16 @@
+[workspace]
+members = [
+  "apps/desktop/src-tauri",
+  "crates/strata-core",
+  "crates/backends/llama/llama-rs",
+  "crates/backends/llama/llama-sys",
+]
+resolver = "2"
+
+default-members = ["apps/desktop/src-tauri"]
+
+[workspace.dependencies]
+bindgen = "0.69"
+cc = { version = "1.0", features = ["parallel"] }
+llama-sys = { path = "crates/backends/llama/llama-sys" }
+llama-rs = { path = "crates/backends/llama/llama-rs" }
