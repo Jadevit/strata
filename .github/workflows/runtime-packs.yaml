@@ -64,14 +64,25 @@ jobs:
             cuda_version: "12.9.0"
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Ninja
         uses: seanmiddleditch/gha-setup-ninja@v4
+
+      # --- fetch llama.cpp at pinned commit (no submodule needed) ---
+      - name: Fetch llama.cpp (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          LLAMA_DIR="$GITHUB_WORKSPACE/.llama.cpp"
+          git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$LLAMA_DIR"
+          cd "$LLAMA_DIR"
+          git fetch --depth 1 origin b907255f4bd169b0dc7dca9553b4c54af5170865
+          git checkout -q b907255f4bd169b0dc7dca9553b4c54af5170865
+          echo "LLAMA_DIR=$LLAMA_DIR" >> "$GITHUB_ENV"
 
       # ---------- OS deps ----------
       - name: Windows · MSVC env
@@ -115,22 +126,17 @@ jobs:
       - name: Configure (Windows)
         if: ${{ startsWith(matrix.os, 'windows') }}
         shell: pwsh
-        working-directory: crates/backends/llama/llama-sys/llama.cpp
-        run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_C_COMPILER=cl
-          -DCMAKE_CXX_COMPILER=cl
-          -DCMAKE_BUILD_TYPE=Release
-          ${{ matrix.cmake_flags }}
+        working-directory: ${{ env.LLAMA_DIR }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_flags }}
 
       - name: Configure (*nix)
         if: ${{ matrix.os != 'windows-latest' }}
-        working-directory: crates/backends/llama/llama-sys/llama.cpp
+        working-directory: ${{ env.LLAMA_DIR }}
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_flags }}
 
       # ---------- Build ----------
       - name: Build
-        working-directory: crates/backends/llama/llama-sys/llama.cpp
+        working-directory: ${{ env.LLAMA_DIR }}
         run: cmake --build build --config Release -j
 
       # ---------- Locate output ----------
@@ -140,7 +146,7 @@ jobs:
         run: |
           set -euo pipefail
           WANT="${{ matrix.outlib }}"
-          ROOT="crates/backends/llama/llama-sys/llama.cpp/build"
+          ROOT="${{ env.LLAMA_DIR }}/build"
           for p in "$ROOT/bin/$WANT" "$ROOT/$WANT" "$ROOT/lib/$WANT"; do
             if [ -f "$p" ]; then
               echo "libpath=$p" >> "$GITHUB_OUTPUT"
@@ -161,14 +167,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path runtime_pack/llama_backend | Out-Null
           New-Item -ItemType Directory -Force -Path runtime_pack/licenses | Out-Null
           Copy-Item "${{ steps.findlib.outputs.libpath }}" runtime_pack/llama_backend/
-          Copy-Item crates/backends/llama/llama-sys/llama.cpp/LICENSE runtime_pack/licenses/llama.cpp.LICENSE
+          Copy-Item "${{ env.LLAMA_DIR }}/LICENSE" runtime_pack/licenses/llama.cpp.LICENSE
           $meta = @"
           {
             "backend": "llama",
             "variant": "${{ matrix.variant }}",
             "os": "${{ matrix.os }}",
             "arch": "${{ matrix.triplet }}",
-            "llama_commit": "$(git -C crates/backends/llama/llama-sys/llama.cpp rev-parse --short HEAD)",
+            "llama_commit": "$(git -C "${{ env.LLAMA_DIR }}" rev-parse --short HEAD)",
             "workflow_sha": "${{ github.sha }}"
           }
           "@
@@ -186,14 +192,14 @@ jobs:
           STAGE="runtime_pack"
           mkdir -p "$STAGE/llama_backend" "$STAGE/licenses"
           cp "${{ steps.findlib.outputs.libpath }}" "$STAGE/llama_backend/"
-          cp crates/backends/llama/llama-sys/llama.cpp/LICENSE "$STAGE/licenses/llama.cpp.LICENSE"
+          cp "${{ env.LLAMA_DIR }}/LICENSE" "$STAGE/licenses/llama.cpp.LICENSE"
           cat > "$STAGE/runtime.json" <<EOF
           {
             "backend": "llama",
             "variant": "${{ matrix.variant }}",
             "os": "${{ matrix.os }}",
             "arch": "${{ matrix.triplet }}",
-            "llama_commit": "$(git -C crates/backends/llama/llama-sys/llama.cpp rev-parse --short HEAD)",
+            "llama_commit": "$(git -C "${{ env.LLAMA_DIR }}" rev-parse --short HEAD)",
             "workflow_sha": "${{ github.sha }}"
           }
           EOF
