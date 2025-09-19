@@ -24,9 +24,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- Toolchains / package managers ---
+      # --- Rust toolchain ---
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          # (no 'profile' here; that input is unsupported)
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -35,16 +38,23 @@ jobs:
             apps/desktop/src-tauri/sidecar/runtime-installer
             .
 
+      # --- Node & pnpm via Corepack (most reliable) ---
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
+          # If your monorepo has a single lockfile at the root:
+          cache-dependency-path: 'pnpm-lock.yaml'
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+      - name: Enable Corepack & pin pnpm
+        shell: bash
+        run: |
+          set -eux
+          corepack enable
+          # Pin exactly the pnpm major you use locally (adjust if needed)
+          corepack prepare pnpm@9 --activate
+          pnpm -v
 
       # --- OS deps ---
       - name: Linux deps (GTK/WebKit + appindicator)
@@ -57,7 +67,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-          # Try 4.1 first (newer distros); fall back to 4.0 on 22.04
+          # 22.04 usually has 4.0; try 4.1 then fall back to 4.0
           sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
 
       - name: Windows deps (WiX Toolset for MSI)
@@ -81,7 +91,7 @@ jobs:
           SRC_DIR="apps/desktop/src-tauri/sidecar/runtime-installer/target/release"
           DEST_DIR="apps/desktop/src-tauri/resources"
           mkdir -p "$DEST_DIR"
-          if [[ "${{ matrix.os }}" == windows-latest ]]; then
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp "$SRC_DIR/runtime-installer.exe" "$DEST_DIR/runtime-installer.exe"
           else
             cp "$SRC_DIR/runtime-installer" "$DEST_DIR/runtime-installer"
