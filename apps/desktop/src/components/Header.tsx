@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ModelEntry } from "../types";
 import { Icons } from "../ui/icons";
 
@@ -22,7 +22,6 @@ function BackendPill({ backend }: { backend: string }) {
 
 export default function Header({
   selectedModel,
-  models,
   recent,
   onSelectModel,
   onOpenInfo,

@@ -3,6 +3,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
 };
@@ -33,6 +34,92 @@ type ModelMetaDTO = ModelMetaOut;
 struct AppState {
     memory: Arc<Mutex<SessionMemory>>,
     current_stop: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+}
+
+// ---------- Installer helpers ----------
+fn installer_exe_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "runtime-installer.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "runtime-installer"
+    }
+}
+
+fn default_runtime_root() -> Option<PathBuf> {
+    // match the installer's per-user layout
+    dirs::data_dir().map(|p| p.join("Strata").join("runtimes").join("llama"))
+}
+
+fn find_sidecar(app: &AppHandle) -> Option<PathBuf> {
+    // 1) packaged app: bundled in Resources
+    if let Some(p) = app
+        .path()
+        .resolve(installer_exe_name(), BaseDirectory::Resource)
+        .ok()
+    {
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2) dev fallback: target/ (adjust if your local path differs)
+    let dev = PathBuf::from("apps/desktop/src-tauri/sidecar/runtime-installer/target/release")
+        .join(installer_exe_name());
+    if dev.exists() {
+        return Some(dev);
+    }
+
+    None
+}
+
+#[tauri::command]
+fn is_llama_runtime_installed() -> bool {
+    if let Some(root) = default_runtime_root() {
+        root.join("runtime.json").exists()
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+fn run_runtime_installer(
+    prefer: Option<String>,
+    manifest: Option<String>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let exe = find_sidecar(&app).ok_or_else(|| {
+        "runtime-installer not found in Resources or local target; bundle it as a sidecar"
+            .to_string()
+    })?;
+
+    let install_dir =
+        default_runtime_root().ok_or_else(|| "could not resolve user data dir".to_string())?;
+
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--install-dir").arg(install_dir);
+
+    if let Some(p) = prefer {
+        cmd.arg("--prefer").arg(p);
+    }
+    if let Some(m) = manifest {
+        cmd.arg("--manifest").arg(m);
+    }
+
+    let status = cmd
+        .status()
+        .map_err(|e| format!("failed to spawn installer: {e}"))?;
+
+    if !status.success() {
+        return Err(format!(
+            "installer exited with code {:?}",
+            status.code().unwrap_or(-1)
+        ));
+    }
+
+    Ok(())
 }
 
 // ---------- System prompt ----------
@@ -328,6 +415,9 @@ pub fn run() {
             run_llm,
             run_llm_stream,
             cancel_generation,
+            // installer
+            is_llama_runtime_installed,
+            run_runtime_installer,
         ])
         .run(tauri::generate_context!())
         .expect("Failed to launch Tauri app");

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Header from "../components/Header";
 import LeftNav from "../components/LeftNav";
 import ModelsRail from "../components/ModelsRail"; // <-- slide-in panel
@@ -25,11 +25,9 @@ export default function Chat() {
   // llm
   const {
     messages,
-    setMessages,
     input,
     setInput,
     isGenerating,
-    streamingEnabled,
     setStreamingEnabled,
     sendMessage,
     stop,
