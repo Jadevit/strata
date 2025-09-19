@@ -2,6 +2,7 @@
 members = [
   "apps/desktop/src-tauri",
   "crates/strata-core",
+  "apps/desktop/src-tauri/sidecar/runtime-installer",
   "crates/backends/llama/llama-rs",
   "crates/backends/llama/llama-sys",
 ]

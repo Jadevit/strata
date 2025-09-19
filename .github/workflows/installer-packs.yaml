@@ -1,0 +1,105 @@
+name: Build Desktop Installers
+
+on:
+  workflow_dispatch: {}
+  workflow_call: {}
+
+concurrency:
+  group: desktop-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+          - os: windows-latest
+          - os: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- Toolchains / package managers ---
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/desktop/src-tauri/sidecar/runtime-installer
+            .
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # --- OS deps ---
+      - name: Linux deps (GTK/WebKit + appindicator)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+          # Try 4.1 first (newer distros); fall back to 4.0 on 22.04
+          sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
+
+      - name: Windows deps (WiX Toolset for MSI)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        run: choco install -y wixtoolset --no-progress
+
+      # --- Install JS deps (workspace) ---
+      - name: Install workspace deps
+        run: pnpm install -w --frozen-lockfile
+
+      # --- Build the sidecar (runtime-installer) and stage into resources ---
+      - name: Build sidecar (runtime-installer)
+        run: |
+          cargo build --manifest-path apps/desktop/src-tauri/sidecar/runtime-installer/Cargo.toml --release
+
+      - name: Stage sidecar into Tauri resources
+        shell: bash
+        run: |
+          set -eux
+          SRC_DIR="apps/desktop/src-tauri/sidecar/runtime-installer/target/release"
+          DEST_DIR="apps/desktop/src-tauri/resources"
+          mkdir -p "$DEST_DIR"
+          if [[ "${{ matrix.os }}" == windows-latest ]]; then
+            cp "$SRC_DIR/runtime-installer.exe" "$DEST_DIR/runtime-installer.exe"
+          else
+            cp "$SRC_DIR/runtime-installer" "$DEST_DIR/runtime-installer"
+            chmod +x "$DEST_DIR/runtime-installer"
+          fi
+
+      # --- Build Tauri installers (uses your tauri.conf.json) ---
+      - name: Build Tauri
+        run: pnpm -C apps/desktop tauri build
+
+      # --- Upload all bundles from this OS run ---
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**
+          if-no-files-found: error

@@ -46,7 +46,7 @@ Thumbs.db
 *.bin
 *.safetensors
 *.onnx
-apps/desktop/src-tauri/resources/models/
+apps/desktop/src-tauri/resources/
 
 # Env and config
 .env
@@ -56,4 +56,28 @@ apps/desktop/src-tauri/resources/models/
 crates/backends/llama/llama-sys/llama.cpp/
 
 # Scripts
+<<<<<<< Updated upstream
 branch.sh
+=======
+branch.shllama.cpp/
+llama.cpp/
+llama.cpp/
+
+# Packaging / installer build outputs
+packaging/**/dist/
+packaging/windows/payload/
+
+# If you end up generating .exe, .msi, .pkg, or .deb here
+*.exe
+*.msi
+*.pkg
+*.deb
+
+# macOS pkgbuild cruft
+packaging/macos/*.pkg
+packaging/macos/*.dmg
+
+# Logs or temp files
+packaging/**/*.log
+packaging/**/*.tmp
+>>>>>>> Stashed changes

@@ -1,8 +1,0 @@
-name: Dev Runtime Packs (llama.cpp)
-
-on:
-  workflow_dispatch: {}
-
-jobs:
-  build:
-    uses: ./.github/workflows/runtime-packs.yaml

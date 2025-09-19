@@ -1,32 +1,28 @@
 import React from "react";
 import type { Message } from "../types";
 
-// helpers (no replaceAll; use regex with /g)
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+
+// ----- <think> helpers -----
 const OPEN = "<think>";
 const CLOSE = "</think>";
 const stripThinkTags = (s: string) => s.replace(/<think>/g, "").replace(/<\/think>/g, "");
 
-// Streaming-aware parser for <think> ... </think>
-// - shows a Thoughts panel as soon as <think> appears (even if not closed yet)
-// - hides raw tags from the visible assistant text while streaming
-// - collapses duplicated nested "<think>" that may echo during generation
 function extractThinkStreaming(s: string): {
   think?: string;
   visible: string;
   isOpen: boolean;
 } {
   const openIdx = s.indexOf(OPEN);
-  if (openIdx === -1) {
-    // no think block; clean any stray tags defensively
-    return { visible: stripThinkTags(s), isOpen: false };
-  }
+  if (openIdx === -1) return { visible: stripThinkTags(s), isOpen: false };
 
   const closeIdx = s.indexOf(CLOSE, openIdx + OPEN.length);
-
   if (closeIdx === -1) {
-    // streaming: open without close
     let think = s.slice(openIdx + OPEN.length);
-    // collapse nested open tags & remove any stray closing that sneaks in
     think = think.replace(/(?:<think>)+/g, "").replace(/<\/think>/g, "");
     const visiblePrefix = s.slice(0, openIdx);
     return {
@@ -36,20 +32,14 @@ function extractThinkStreaming(s: string): {
     };
   }
 
-  // complete block
   let think = s.slice(openIdx + OPEN.length, closeIdx);
   think = think.replace(/(?:<think>)+/g, "").replace(/<\/think>/g, "");
-
   const visibleRest = s.slice(closeIdx + CLOSE.length);
   const visible = stripThinkTags(s.slice(0, openIdx) + visibleRest);
-
-  return {
-    think: think.trim(),
-    visible: visible.trim(),
-    isOpen: false,
-  };
+  return { think: think.trim(), visible: visible.trim(), isOpen: false };
 }
 
+// ----- UI bits -----
 function ChevronRight({ className = "h-3.5 w-3.5" }: { className?: string }) {
   return (
     <svg
@@ -67,6 +57,80 @@ function ChevronRight({ className = "h-3.5 w-3.5" }: { className?: string }) {
   );
 }
 
+// ----- Code block with copy button -----
+type CodeBlockProps = {
+  inline?: boolean;
+  className?: string;
+  children?: React.ReactNode;
+};
+
+const CodeBlock: React.FC<CodeBlockProps> = ({ inline, className, children }) => {
+  const match = /language-(\w+)/.exec(className || "");
+  const code = String(children ?? "").replace(/\n$/, "");
+
+  if (inline) {
+    return (
+      <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em]">
+        {children}
+      </code>
+    );
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div className="group relative my-3 overflow-hidden rounded-lg border border-white/10">
+      <button
+        onClick={handleCopy}
+        className="absolute right-2 top-2 hidden rounded-md bg-white/10 px-2 py-1 text-xs text-slate-200 backdrop-blur-sm transition group-hover:block"
+        title="Copy"
+      >
+        Copy
+      </button>
+      <SyntaxHighlighter
+        language={match?.[1]}
+        style={vscDarkPlus}
+        PreTag="div"
+        showLineNumbers
+        customStyle={{
+          margin: 0,
+          background: "transparent",
+          fontSize: "0.95em",
+        }}
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  );
+};
+
+// Map Markdown → React
+const mdComponents = {
+  code: (props: any) => {
+    const { inline, className, children } = props as CodeBlockProps;
+    return (
+      <CodeBlock inline={inline} className={className}>
+        {children}
+      </CodeBlock>
+    );
+  },
+  a: (props: any) => (
+    <a {...props} className="underline decoration-slate-500 hover:decoration-slate-300" />
+  ),
+  table: (props: any) => (
+    <div className="not-prose overflow-x-auto">
+      <table {...props} />
+    </div>
+  ),
+};
+
+// ----- Main transcript -----
 export default function ChatTranscript({
   messages,
   endRef,
@@ -100,7 +164,7 @@ export default function ChatTranscript({
                   </div>
                 )}
 
-                {/* Thoughts (appears as soon as <think> streams in) */}
+                {/* Thoughts drawer */}
                 {think && (
                   <details className="group max-w-[90%] text-xs text-slate-400" open={false}>
                     <summary className="flex cursor-pointer select-none items-center gap-1 hover:text-slate-300">
@@ -113,11 +177,13 @@ export default function ChatTranscript({
                   </details>
                 )}
 
-                {/* assistant flat block (without raw <think> tags visible) */}
+                {/* assistant message w/ Markdown */}
                 {aiRaw && (
-                  <div className="mr-auto max-w-[90%] text-[15px] leading-7 text-slate-100">
-                    {visible}
-                  </div>
+                  <article className="mr-auto max-w-[90%] prose prose-invert prose-pre:my-0 prose-pre:bg-transparent prose-code:before:hidden prose-code:after:hidden">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                      {visible}
+                    </ReactMarkdown>
+                  </article>
                 )}
 
                 {i < messages.length - 1 && <div className="mt-1 h-px w-full bg-white/5" />}

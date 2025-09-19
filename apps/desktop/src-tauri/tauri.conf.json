@@ -8,7 +8,7 @@
     "beforeDevCommand": "pnpm -C apps/desktop dev",
     "beforeBuildCommand": "pnpm -C apps/desktop build",
     "devUrl": "http://localhost:1420",
-    "frontendDist": "apps/desktop/dist"
+    "frontendDist": "../dist"
 },
 
   "app": {
