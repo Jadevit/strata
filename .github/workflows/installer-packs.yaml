@@ -24,12 +24,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- Rust toolchain ---
+# --- Toolchains / package managers ---
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          # (no 'profile' here; that input is unsupported)
+          profile: minimal
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -38,44 +38,34 @@ jobs:
             apps/desktop/src-tauri/sidecar/runtime-installer
             .
 
-      # --- Node & pnpm via Corepack (most reliable) ---
+      # Install pnpm FIRST (puts pnpm on PATH)
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      # Setup Node (no built-in pnpm cache here to avoid the error)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
-          # If your monorepo has a single lockfile at the root:
-          cache-dependency-path: 'pnpm-lock.yaml'
+          # DO NOT set "cache: pnpm" here
 
-      - name: Enable Corepack & pin pnpm
+      # Compute pnpm store path (cross-platform) and cache it
+      - name: Get pnpm store dir
         shell: bash
-        run: |
-          set -eux
-          corepack enable
-          # Pin exactly the pnpm major you use locally (adjust if needed)
-          corepack prepare pnpm@9 --activate
-          pnpm -v
+        run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
 
-      # --- OS deps ---
-      - name: Linux deps (GTK/WebKit + appindicator)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          set -eux
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
-          # 22.04 usually has 4.0; try 4.1 then fall back to 4.0
-          sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
+      - name: Restore pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
-      - name: Windows deps (WiX Toolset for MSI)
-        if: startsWith(matrix.os, 'windows')
-        shell: powershell
-        run: choco install -y wixtoolset --no-progress
-
-      # --- Install JS deps (workspace) ---
+      # Now install deps
       - name: Install workspace deps
         run: pnpm install -w --frozen-lockfile
 
