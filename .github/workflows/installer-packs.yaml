@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-# --- Toolchains / package managers ---
+      # --- Toolchains / package managers ---
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@v1
         with:
@@ -37,22 +37,19 @@ jobs:
             apps/desktop/src-tauri/sidecar/runtime-installer
             .
 
-      # Install pnpm FIRST (puts pnpm on PATH)
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
+          version: 10.14.0
           run_install: false
 
-      # Setup Node (no built-in pnpm cache here to avoid the error)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # DO NOT set "cache: pnpm" here
 
-      # Compute pnpm store path (cross-platform) and cache it
+      # Cache pnpm store
       - name: Get pnpm store dir
-        shell: bash
         run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
 
       - name: Restore pnpm cache
@@ -63,11 +60,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
-      # Now install deps
       - name: Install workspace deps
         run: pnpm install -w --frozen-lockfile
 
-      # --- Build the sidecar (runtime-installer) and stage into resources ---
+      # --- Build sidecar (runtime-installer) ---
       - name: Build sidecar (runtime-installer)
         run: |
           cargo build --manifest-path apps/desktop/src-tauri/sidecar/runtime-installer/Cargo.toml --release
@@ -76,7 +72,7 @@ jobs:
         shell: bash
         run: |
           set -eux
-          SRC_DIR="apps/desktop/src-tauri/sidecar/runtime-installer/target/release"
+          SRC_DIR="target/release"
           DEST_DIR="apps/desktop/src-tauri/resources"
           mkdir -p "$DEST_DIR"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
@@ -86,7 +82,7 @@ jobs:
             chmod +x "$DEST_DIR/runtime-installer"
           fi
 
-      # --- Build Tauri installers (uses your tauri.conf.json) ---
+      # --- Build Tauri installers ---
       - name: Build Tauri
         run: pnpm -C apps/desktop tauri build
 
