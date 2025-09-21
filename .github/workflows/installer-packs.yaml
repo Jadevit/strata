@@ -47,6 +47,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install Tauri CLI
+        run: pnpm dlx @tauri-apps/cli@latest -v
+
       - name: Get pnpm store dir
         shell: bash
         run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
