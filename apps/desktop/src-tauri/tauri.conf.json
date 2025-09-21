@@ -5,8 +5,8 @@
   "identifier": "com.strata.desktop",
 
   "build": {
-    "beforeDevCommand": "pnpm -C .. dev",
-    "beforeBuildCommand": "pnpm -C .. build",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
 },
