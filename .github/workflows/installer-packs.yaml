@@ -37,19 +37,19 @@ jobs:
             apps/desktop/src-tauri/sidecar/runtime-installer
             .
 
+      # Install pnpm first (puts pnpm on PATH); don't pin a version here
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          run_install: false  # no version here
+          run_install: false
 
+      # Setup Node (no pnpm cache here to avoid "multiple versions" warning)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install Tauri CLI
-        run: pnpm dlx @tauri-apps/cli@latest -v
-
+      # Compute pnpm store path (cross-platform) and cache it
       - name: Get pnpm store dir
         shell: bash
         run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
@@ -62,9 +62,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
-      - name: Install workspace deps
-        run: pnpm install -w --frozen-lockfile
-
       # --- OS deps ---
       - name: Linux deps (GTK/WebKit + appindicator)
         if: matrix.os == 'ubuntu-22.04'
@@ -76,6 +73,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
+          # Try 4.1 first; fall back to 4.0 on 22.04
           sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
 
       - name: Windows deps (WiX Toolset for MSI)
@@ -83,17 +81,24 @@ jobs:
         shell: powershell
         run: choco install -y wixtoolset --no-progress
 
-      # --- Build the sidecar (runtime-installer) ---
+      # --- Install JS deps ---
+      - name: Install workspace deps
+        run: pnpm install -w --frozen-lockfile
+
+      - name: Install app deps (apps/desktop)
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      # --- Build the sidecar (runtime-installer) and stage into resources ---
       - name: Build sidecar (runtime-installer)
         run: |
           cargo build --manifest-path apps/desktop/src-tauri/sidecar/runtime-installer/Cargo.toml --release
 
-      # --- Stage sidecar into Tauri resources ---
       - name: Stage sidecar into Tauri resources
         shell: bash
         run: |
           set -eux
-          SRC_DIR="target/release"   # <— repo-root target
+          SRC_DIR="target/release"
           DEST_DIR="apps/desktop/src-tauri/resources"
           mkdir -p "$DEST_DIR"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
@@ -105,12 +110,14 @@ jobs:
 
       # --- Build Tauri installers (uses your tauri.conf.json) ---
       - name: Build Tauri
-        run: pnpm -C apps/desktop tauri build
+        working-directory: apps/desktop
+        run: pnpm dlx @tauri-apps/cli@latest build
 
       # --- Upload all bundles from this OS run ---
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
-          path: apps/desktop/src-tauri/target/release/bundle/**
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**
           if-no-files-found: error
