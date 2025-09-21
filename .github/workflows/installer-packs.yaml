@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- Toolchains / package managers ---
+      # ---------------- Toolchains ----------------
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@v1
         with:
@@ -34,23 +34,23 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            apps/desktop/src-tauri/sidecar/runtime-installer
+            sidecar/runtime-installer
             .
 
-      # Install pnpm FIRST (adds it to PATH, no version specified here)
+      # pnpm FIRST (no version -> respects packageManager in your package.json)
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           run_install: false
 
-      # Setup Node (don’t ask it to manage pnpm)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          # IMPORTANT: do NOT enable "cache: pnpm" here to avoid version conflicts
 
-      # Cache pnpm store (force bash for cross-platform correctness)
-      - name: Get pnpm store dir
+      # Cache pnpm store (works cross-platform)
+      - name: Compute pnpm store path
         shell: bash
         run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
 
@@ -62,15 +62,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
-      # Install deps
       - name: Install workspace deps
         run: pnpm install -w --frozen-lockfile
 
-      # Install Tauri CLI
-      - name: Install Tauri CLI
-        run: pnpm add -g @tauri-apps/cli
-
-      # --- OS deps ---
+      # ---------------- OS deps ----------------
       - name: Linux deps (GTK/WebKit + appindicator)
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -81,6 +76,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
+          # Prefer 4.1 if available, fall back to 4.0 on 22.04
           sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
 
       - name: Windows deps (WiX Toolset for MSI)
@@ -88,16 +84,15 @@ jobs:
         shell: powershell
         run: choco install -y wixtoolset --no-progress
 
-      # --- Build the sidecar (runtime-installer) and stage into resources ---
+      # ---------------- Build sidecar + stage into Tauri resources ----------------
       - name: Build sidecar (runtime-installer)
-        run: |
-          cargo build --manifest-path apps/desktop/src-tauri/sidecar/runtime-installer/Cargo.toml --release
+        run: cargo build --manifest-path sidecar/runtime-installer/Cargo.toml --release
 
       - name: Stage sidecar into Tauri resources
         shell: bash
         run: |
           set -eux
-          SRC_DIR="apps/desktop/src-tauri/sidecar/runtime-installer/target/release"
+          SRC_DIR="target/release"
           DEST_DIR="apps/desktop/src-tauri/resources"
           mkdir -p "$DEST_DIR"
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
@@ -107,15 +102,19 @@ jobs:
             chmod +x "$DEST_DIR/runtime-installer"
           fi
 
-      # --- Build Tauri installers (uses your tauri.conf.json) ---
+      # ---------------- Build Tauri (uses tauri.conf.json) ----------------
+      - name: Print pnpm & node versions
+        run: |
+          pnpm -v
+          node -v
+
       - name: Build Tauri
         run: pnpm -C apps/desktop tauri build
 
-      # --- Upload all bundles from this OS run ---
+      # ---------------- Upload installers ----------------
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/**
+          path: apps/desktop/src-tauri/target/release/bundle/**
           if-no-files-found: error
