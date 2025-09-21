@@ -29,7 +29,6 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          profile: minimal
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -42,7 +41,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10.14.0
           run_install: false
 
       # Setup Node (no built-in pnpm cache here to avoid the error)
