@@ -1,0 +1,226 @@
+name: Build Runtime Packs (llama.cpp)
+
+on:
+  workflow_call
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---------- Windows (MSVC) ----------
+          - os: windows-latest
+            triplet: x64
+            variant: cpu
+            outlib: llama.dll
+            cmake_flags: "-DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF"
+
+          - os: windows-latest
+            triplet: x64
+            variant: vulkan
+            outlib: llama.dll
+            cmake_flags: "-DGGML_VULKAN=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF"
+
+          - os: windows-latest
+            triplet: x64
+            variant: cuda
+            outlib: llama.dll
+            cmake_flags: "-DGGML_CUDA=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF -DCMAKE_CUDA_FLAGS=--allow-unsupported-compiler"
+            cuda_version: "12.9.0"
+
+          # ---------- macOS (arm64: CPU + METAL) ----------
+          - os: macos-14
+            triplet: arm64
+            variant: cpu
+            outlib: libllama.dylib
+            cmake_flags: "-DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF"
+
+          - os: macos-14
+            triplet: arm64
+            variant: metal
+            outlib: libllama.dylib
+            cmake_flags: "-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF"
+
+          # ---------- Linux (all pinned to 22.04) ----------
+          - os: ubuntu-22.04
+            triplet: x64
+            variant: cpu
+            outlib: libllama.so
+            cmake_flags: "-DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF"
+
+          - os: ubuntu-22.04
+            triplet: x64
+            variant: vulkan
+            outlib: libllama.so
+            cmake_flags: "-DGGML_VULKAN=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF"
+
+          - os: ubuntu-22.04
+            triplet: x64
+            variant: cuda
+            outlib: libllama.so
+            cmake_flags: "-DGGML_CUDA=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF -DCMAKE_CUDA_FLAGS=--allow-unsupported-compiler"
+            cuda_version: "12.9.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v4
+
+      # --- fetch llama.cpp at pinned commit (no submodule needed) ---
+      - name: Fetch llama.cpp (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          LLAMA_DIR="$GITHUB_WORKSPACE/.llama.cpp"
+          git clone --depth 1 https://github.com/ggerganov/llama.cpp.git "$LLAMA_DIR"
+          cd "$LLAMA_DIR"
+          git fetch --depth 1 origin b907255f4bd169b0dc7dca9553b4c54af5170865
+          git checkout -q b907255f4bd169b0dc7dca9553b4c54af5170865
+          echo "LLAMA_DIR=$LLAMA_DIR" >> "$GITHUB_ENV"
+
+      # ---------- OS deps ----------
+      - name: Windows · MSVC env
+        if: ${{ startsWith(matrix.os, 'windows') }}
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Windows · Vulkan SDK (vulkan only)
+        if: ${{ startsWith(matrix.os, 'windows') && matrix.variant == 'vulkan' }}
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: "1.3.290.0"
+
+      - name: Windows · CUDA Toolkit (cuda only)
+        if: ${{ startsWith(matrix.os, 'windows') && matrix.variant == 'cuda' }}
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          method: network
+          use-github-cache: false
+
+      - name: Ubuntu · deps
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config zip
+
+      - name: Ubuntu · Vulkan SDK (vulkan only)
+        if: ${{ matrix.os == 'ubuntu-22.04' && matrix.variant == 'vulkan' }}
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: "1.3.290.0"
+
+      - name: Ubuntu · CUDA Toolkit (cuda only)
+        if: ${{ matrix.os == 'ubuntu-22.04' && matrix.variant == 'cuda' }}
+        uses: Jimver/cuda-toolkit@v0.2.27
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          method: network
+
+      # ---------- Configure ----------
+      - name: Configure (Windows)
+        if: ${{ startsWith(matrix.os, 'windows') }}
+        shell: pwsh
+        working-directory: ${{ env.LLAMA_DIR }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_flags }}
+
+      - name: Configure (*nix)
+        if: ${{ matrix.os != 'windows-latest' }}
+        working-directory: ${{ env.LLAMA_DIR }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_flags }}
+
+      # ---------- Build ----------
+      - name: Build
+        working-directory: ${{ env.LLAMA_DIR }}
+        run: cmake --build build --config Release -j
+
+      # ---------- Locate output ----------
+      - name: Find output
+        id: findlib
+        shell: bash
+        run: |
+          set -euo pipefail
+          WANT="${{ matrix.outlib }}"
+          ROOT="${{ env.LLAMA_DIR }}/build"
+          for p in "$ROOT/bin/$WANT" "$ROOT/$WANT" "$ROOT/lib/$WANT"; do
+            if [ -f "$p" ]; then
+              echo "libpath=$p" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          p=$(find "$ROOT" -name "$WANT" -type f -print -quit)
+          [ -n "$p" ] && echo "libpath=$p" >> "$GITHUB_OUTPUT" && exit 0
+          echo "Could not find $WANT under $ROOT" >&2
+          exit 1
+
+      # ---------- Stage runtime pack ----------
+      - name: Stage (Windows)
+        if: ${{ startsWith(matrix.os, 'windows') }}
+        id: stage_win
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path runtime_pack/llama_backend | Out-Null
+          New-Item -ItemType Directory -Force -Path runtime_pack/licenses | Out-Null
+          Copy-Item "${{ steps.findlib.outputs.libpath }}" runtime_pack/llama_backend/
+          Copy-Item "${{ env.LLAMA_DIR }}/LICENSE" runtime_pack/licenses/llama.cpp.LICENSE
+          $meta = @"
+          {
+            "backend": "llama",
+            "variant": "${{ matrix.variant }}",
+            "os": "${{ matrix.os }}",
+            "arch": "${{ matrix.triplet }}",
+            "llama_commit": "$(git -C "${{ env.LLAMA_DIR }}" rev-parse --short HEAD)",
+            "workflow_sha": "${{ github.sha }}"
+          }
+          "@
+          $meta | Out-File -FilePath runtime_pack/runtime.json -Encoding ascii
+          $name = "strata-llama-${{ matrix.triplet }}-${{ matrix.variant }}-${{ matrix.os }}.zip"
+          Compress-Archive -Path runtime_pack\* -DestinationPath $name -CompressionLevel Optimal
+          echo "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Stage (*nix)
+        if: ${{ matrix.os != 'windows-latest' }}
+        id: stage_nix
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="runtime_pack"
+          mkdir -p "$STAGE/llama_backend" "$STAGE/licenses"
+          cp "${{ steps.findlib.outputs.libpath }}" "$STAGE/llama_backend/"
+          cp "${{ env.LLAMA_DIR }}/LICENSE" "$STAGE/licenses/llama.cpp.LICENSE"
+          cat > "$STAGE/runtime.json" <<EOF
+          {
+            "backend": "llama",
+            "variant": "${{ matrix.variant }}",
+            "os": "${{ matrix.os }}",
+            "arch": "${{ matrix.triplet }}",
+            "llama_commit": "$(git -C "${{ env.LLAMA_DIR }}" rev-parse --short HEAD)",
+            "workflow_sha": "${{ github.sha }}"
+          }
+          EOF
+          NAME="strata-llama-${{ matrix.triplet }}-${{ matrix.variant }}-${{ matrix.os }}.zip"
+          (cd "$STAGE" && zip -r "../$NAME" . >/dev/null)
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: SHA256
+        shell: bash
+        run: |
+          FILE="${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}"
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$FILE" > "$FILE.sha256"
+          else
+            sha256sum "$FILE" > "$FILE.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}
+          path: |
+            ${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}
+            ${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}.sha256

@@ -1,0 +1,13 @@
+Strata
+Copyright (c) 2025 Jaden Stanley
+
+This product is licensed under the Elastic License 2.0 (ELv2).
+See: https://www.elastic.co/licensing/elastic-license
+
+---
+
+This product includes software developed by third parties:
+
+- llama.cpp (MIT License)
+  Copyright (c) 2023-present, Georgi Gerganov and contributors
+  https://github.com/ggerganov/llama.cpp

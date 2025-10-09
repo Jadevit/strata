@@ -1,0 +1,18 @@
+[package]
+name = "strata-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+once_cell = "1.21.3"
+libloading = "0.8"
+serde = { version = "1", features = ["derive"] }
+strata-abi = { workspace = true }
+
+[features]
+default = []
+utf8-trace = []

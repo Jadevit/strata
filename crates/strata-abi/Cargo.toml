@@ -1,0 +1,13 @@
+[package]
+name = "strata-abi"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Stable ABI and model-agnostic contracts for Strata backends/plugins."
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,120 @@
+name: Release Runtime Packs (llama.cpp)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag for manual runs (e.g. v0.0.0)"
+        required: false
+        default: "v0.0.0"
+
+jobs:
+  build:
+    uses: ./.github/workflows/runtime-packs.yaml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push to the runtimes repo
+      id-token: write   # harmless if you add OIDC later
+    steps:
+      - name: Create GitHub App token (for strata-runtimes)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RUNTIME_APP_ID }}
+          private-key: ${{ secrets.RUNTIME_APP_PRIVATE_KEY }}
+          owner: Jadevit
+          repositories: strata-runtimes
+
+      - name: Checkout runtimes repo (with App token)
+        uses: actions/checkout@v4
+        with:
+          repository: Jadevit/strata-runtimes
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Download build artifacts (flat)
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Stage into runtimes layout + manifest
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Decide VERSION:
+          # - For normal release runs, use the release tag (github.ref_name)
+          # - For manual runs, use the provided input (default v0.0.0)
+          if [[ "$EVENT_NAME" == "release" && -n "${REF_NAME}" ]]; then
+            VERSION="${REF_NAME}"
+          else
+            VERSION="${VERSION_INPUT:-}"
+          fi
+
+          if [[ -z "${VERSION}" ]]; then
+            echo "❌ VERSION is empty. Provide 'version' when running manually."
+            exit 1
+          fi
+
+          echo "📦 Publishing version: $VERSION"
+
+          mkdir -p runtimes/archives/"$VERSION"
+          rm -rf runtimes/latest || true
+          mkdir -p runtimes/latest/"$VERSION"
+
+          shopt -s nullglob
+          for f in artifacts/*; do
+            cp -v "$f" "runtimes/archives/$VERSION/"
+            cp -v "$f" "runtimes/latest/$VERSION/"
+          done
+
+          MAN="runtimes/latest/manifest.json"
+          echo '{ "llama": [' > "$MAN"
+          first=1
+          for z in runtimes/latest/"$VERSION"/strata-llama-*.zip; do
+            base="$(basename "$z")"
+            core="${base%.zip}"
+            IFS='-' read -r _ _ arch variant os <<< "$core"
+
+            sha_file="runtimes/latest/$VERSION/${base}.sha256"
+            if [[ -f "$sha_file" ]]; then
+              sha="$(awk '{print $1}' "$sha_file")"
+            else
+              if command -v shasum >/dev/null 2>&1; then
+                sha="$(shasum -a 256 "$z" | awk '{print $1}')"
+              else
+                sha="$(sha256sum "$z" | awk '{print $1}')"
+              fi
+              echo "$sha  $base" > "$sha_file"
+            fi
+
+            url="https://raw.githubusercontent.com/Jadevit/strata-runtimes/main/runtimes/latest/$VERSION/$base"
+            [[ $first -eq 0 ]] && echo ',' >> "$MAN"
+            first=0
+            printf '  {"name":"%s","sha256":"%s","os":"%s","arch":"%s","variant":"%s","url":"%s"}' \
+              "$base" "$sha" "$os" "$arch" "$variant" "$url" >> "$MAN"
+          done
+          echo '' >> "$MAN"
+          echo '] }' >> "$MAN"
+
+          git config user.name  "strata-bot[app]"
+          git config user.email "strata-bot[app]@users.noreply.github.com"
+          git add runtimes/
+          git commit -m "Release $VERSION artifacts" || echo "No changes"
+          git tag -f "$VERSION"
+
+      - name: Push to runtimes repo
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git push origin main --tags --force
