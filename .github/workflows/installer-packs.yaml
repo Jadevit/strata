@@ -1,8 +1,8 @@
 name: Build Desktop Installers
 
 on:
-  workflow_dispatch: {}
-  workflow_call: {}
+  workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: desktop-installers-${{ github.ref }}
@@ -24,7 +24,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- Toolchains / package managers ---
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@v1
         with:
@@ -37,19 +36,16 @@ jobs:
             apps/desktop/src-tauri/sidecar/runtime-installer
             .
 
-      # Install pnpm first (puts pnpm on PATH); don't pin a version here
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           run_install: false
 
-      # Setup Node (no pnpm cache here to avoid "multiple versions" warning)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # Compute pnpm store path (cross-platform) and cache it
       - name: Get pnpm store dir
         shell: bash
         run: echo "PNPM_STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
@@ -62,7 +58,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
-      # --- OS deps ---
       - name: Linux deps (GTK/WebKit + appindicator)
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -73,15 +68,13 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-          # Try 4.1 first; fall back to 4.0 on 22.04
           sudo apt-get install -y libwebkit2gtk-4.1-dev || sudo apt-get install -y libwebkit2gtk-4.0-dev
 
-      - name: Windows deps (WiX Toolset for MSI)
+      - name: Windows deps (WiX Toolset)
         if: startsWith(matrix.os, 'windows')
         shell: powershell
         run: choco install -y wixtoolset --no-progress
 
-      # --- Install JS deps ---
       - name: Install workspace deps
         run: pnpm install -w --frozen-lockfile
 
@@ -89,12 +82,11 @@ jobs:
         working-directory: apps/desktop
         run: pnpm install --frozen-lockfile
 
-      # --- Build the sidecar (runtime-installer) and stage into resources ---
       - name: Build sidecar (runtime-installer)
         run: |
           cargo build --manifest-path apps/desktop/src-tauri/sidecar/runtime-installer/Cargo.toml --release
 
-      - name: Stage sidecar into Tauri resources
+      - name: Stage sidecar into resources
         shell: bash
         run: |
           set -eux
@@ -108,17 +100,14 @@ jobs:
             chmod +x "$DEST_DIR/runtime-installer"
           fi
 
-      # --- Build Tauri installers (uses your tauri.conf.json) ---
-      - name: Build Tauri
+      - name: Build Tauri app (release)
         working-directory: apps/desktop
         env:
-          # Force dynamic-link feature and point to runtime dir
           STRATA_RUNTIME_DIR: ${{ github.workspace }}/apps/desktop/src-tauri/resources
           CARGO_FEATURES: dynamic-link
         run: |
           pnpm dlx @tauri-apps/cli@latest build --features dynamic-link
 
-      # --- Upload all bundles from this OS run ---
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:

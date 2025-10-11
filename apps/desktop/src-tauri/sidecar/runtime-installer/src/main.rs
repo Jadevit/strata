@@ -24,19 +24,11 @@ const DEFAULT_MANIFEST: &str =
 
 /// Core llama library name per OS
 #[cfg(target_os = "windows")]
-const LIB_NAME: &str = "llama.dll";
+const PLUGIN_NAME: &str = "StrataLlama.dll";
 #[cfg(target_os = "linux")]
-const LIB_NAME: &str = "libllama.so";
+const PLUGIN_NAME: &str = "libStrataLlama.so";
 #[cfg(target_os = "macos")]
-const LIB_NAME: &str = "libllama.dylib";
-
-/// Plugin (C-ABI shim) filename per OS
-#[cfg(target_os = "windows")]
-const PLUGIN_NAME: &str = "llama_plugin.dll";
-#[cfg(target_os = "linux")]
-const PLUGIN_NAME: &str = "libllama_plugin.so";
-#[cfg(target_os = "macos")]
-const PLUGIN_NAME: &str = "libllama_plugin.dylib";
+const PLUGIN_NAME: &str = "libStrataLlama.dylib";
 
 #[derive(Debug, Clone, ValueEnum)]
 enum Pref {
@@ -348,14 +340,14 @@ fn write_runtime_config(root: &Path, installed: &[&str], active_gpu: Option<&str
     let current_lib_dir = root.join(active_variant).join("llama_backend");
 
     let cfg = serde_json::json!({
-        "llama": {
-            "active": if active_gpu.is_some() { "gpu" } else { "cpu" },
-            "gpu_backend": active_gpu,
-            "installed": installed,
-            "root": root.to_string_lossy(),
-            // New: where the app can find both libllama.* and the plugin
-            "current_lib_dir": current_lib_dir.to_string_lossy(),
-        }
+      "llama": {
+        "active": if active_gpu.is_some() { "gpu" } else { "cpu" },
+        "gpu_backend": active_gpu,
+        "installed": installed,
+        "root": root.to_string_lossy(),
+        "current_lib_dir": current_lib_dir.to_string_lossy(),   // where StrataLlama.* lives
+        "monolith": true
+      }
     });
 
     let path = root.join("runtime.json");
@@ -407,8 +399,9 @@ fn main() -> Result<()> {
         println!("Downloading {} → {}", e.url, zip_path.display());
         download(&e.url, &zip_path)?;
 
-        let want_sha = e.sha256.to_lowercase();
-        let got_sha = sha256_file(&zip_path)?;
+        let want_sha = e.sha256.trim().to_lowercase();
+        let got_sha = sha256_file(&zip_path)?.trim().to_string();
+
         if got_sha != want_sha {
             return Err(anyhow!(
                 "checksum mismatch for {} (got {}, want {})",
@@ -427,22 +420,15 @@ fn main() -> Result<()> {
             active_gpu = Some(e.variant.as_str());
         }
 
-        // Validate that both the llama lib and the plugin are present
+        // Validate plugin presence (monolithic runtime: plugin contains llama.cpp)
         let lib_dir = dest.join("llama_backend");
-        let core_lib = lib_dir.join(LIB_NAME);
         let plugin = lib_dir.join(PLUGIN_NAME);
-
-        if !core_lib.exists() {
-            eprintln!("❌ missing core llama library: {}", core_lib.display());
-        } else {
-            println!("✅ found {}", core_lib.display());
-        }
 
         if !plugin.exists() {
             eprintln!("❌ missing plugin: {}", plugin.display());
             eprintln!(
-                "   (Your runtime zip should include {:?} next to {:?})",
-                PLUGIN_NAME, LIB_NAME
+                "   (Your runtime zip should include {:?} in llama_backend/)",
+                PLUGIN_NAME
             );
         } else {
             println!("✅ found {}", plugin.display());

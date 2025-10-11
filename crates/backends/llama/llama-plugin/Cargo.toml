@@ -6,13 +6,18 @@ license = "MIT OR Apache-2.0"
 description = "Strata llama backend plugin (C-ABI)."
 
 [lib]
-name = "llama_plugin"          # produces libllama_plugin.(so|dylib) / llama_plugin.dll
+name = "StrataLlama"          # produces libllama_plugin.(so|dylib) / llama_plugin.dll
 crate-type = ["cdylib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# paths relative to this crate's folder
 strata-abi = { path = "../../../strata-abi" }
 llama-rs   = { path = "../llama-rs" }
+
+[features]
+default = []
+cuda   = ["llama-rs/cuda"]
+vulkan = ["llama-rs/vulkan"]
+metal  = ["llama-rs/metal"]
+dynamic-link = ["llama-rs/dynamic-link"]

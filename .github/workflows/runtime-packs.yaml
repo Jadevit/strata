@@ -1,4 +1,4 @@
-name: Build Runtime Packs (llama plugin)
+name: Build Runtime Packs (llama monolith)
 
 on:
   workflow_call:
@@ -15,63 +15,75 @@ jobs:
           - os: windows-latest
             triplet: x64
             variant: cpu
-            outplugin: llama_plugin.dll
+            outplugin: StrataLlama.dll
 
           - os: windows-latest
             triplet: x64
             variant: vulkan
-            outplugin: llama_plugin.dll
+            outplugin: StrataLlama.dll
 
           - os: windows-latest
             triplet: x64
             variant: cuda
-            outplugin: llama_plugin.dll
+            outplugin: StrataLlama.dll
             cuda_version: "12.9.0"
 
           # ---------- macOS (arm64: CPU + METAL) ----------
           - os: macos-14
             triplet: arm64
             variant: cpu
-            outplugin: libllama_plugin.dylib
+            outplugin: libStrataLlama.dylib
 
           - os: macos-14
             triplet: arm64
             variant: metal
-            outplugin: libllama_plugin.dylib
+            outplugin: libStrataLlama.dylib
 
           # ---------- Linux (22.04) ----------
           - os: ubuntu-22.04
             triplet: x64
             variant: cpu
-            outplugin: libllama_plugin.so
+            outplugin: libStrataLlama.so
 
           - os: ubuntu-22.04
             triplet: x64
             variant: vulkan
-            outplugin: libllama_plugin.so
+            outplugin: libStrataLlama.so
 
           - os: ubuntu-22.04
             triplet: x64
             variant: cuda
-            outplugin: libllama_plugin.so
+            outplugin: libStrataLlama.so
             cuda_version: "12.9.0"
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Fetch llama.cpp (pinned commit)
+        working-directory: crates/backends/llama/llama-sys
+        run: |
+          set -eux
+          if [ ! -d "llama.cpp" ]; then
+            echo "Fetching llama.cpp source..."
+            git clone https://github.com/ggerganov/llama.cpp.git llama.cpp
+            cd llama.cpp
+            git checkout 11f0af5504252e453d57406a935480c909e3ff37
+          else
+            echo "✅ llama.cpp already exists"
+          fi
+
       - name: Set up Ninja
         uses: seanmiddleditch/gha-setup-ninja@v4
 
-      # ---------- Toolchains ----------
-      - name: Install Rust (stable)
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
 
-      - name: Cache Rust
+      - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -80,7 +92,7 @@ jobs:
             crates/backends/llama/llama-rs
             crates/backends/llama/llama-plugin
 
-      # ---------- OS deps (UNCHANGED from your previous workflow) ----------
+      # ---------- OS dependencies ----------
       - name: Windows · MSVC env
         if: ${{ startsWith(matrix.os, 'windows') }}
         uses: ilammy/msvc-dev-cmd@v1
@@ -118,7 +130,7 @@ jobs:
           cuda: ${{ matrix.cuda_version }}
           method: network
 
-      # ---------- Build llama-plugin (cdylib) ----------
+      # ---------- Build monolithic plugin ----------
       - name: Compute Cargo features
         shell: bash
         run: |
@@ -131,7 +143,7 @@ jobs:
           esac
           echo "Using features: ${FEATS:-<none>}"
 
-      - name: Build (release)
+      - name: Build monolith (release)
         shell: bash
         run: |
           set -eux
@@ -142,45 +154,14 @@ jobs:
           fi
 
       # ---------- Stage runtime pack ----------
-      - name: Stage (Windows)
-        if: ${{ startsWith(matrix.os, 'windows') }}
-        id: stage_win
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path runtime_pack/llama_backend | Out-Null
-          New-Item -ItemType Directory -Force -Path runtime_pack/licenses | Out-Null
-
-          Copy-Item "target/release/${{ matrix.outplugin }}" "runtime_pack/llama_backend/"
-
-          # llama.cpp license from vendored source
-          Copy-Item "crates/backends/llama/llama-sys/llama.cpp/LICENSE" "runtime_pack/licenses/llama.cpp.LICENSE"
-
-          $meta = @"
-          {
-            "backend": "llama",
-            "variant": "${{ matrix.variant }}",
-            "os": "${{ matrix.os }}",
-            "arch": "${{ matrix.triplet }}",
-            "workflow_sha": "${{ github.sha }}"
-          }
-          "@
-          $meta | Out-File -FilePath runtime_pack/runtime.json -Encoding ascii
-
-          $name = "strata-llama-${{ matrix.triplet }}-${{ matrix.variant }}-${{ matrix.os }}.zip"
-          Compress-Archive -Path runtime_pack\* -DestinationPath $name -CompressionLevel Optimal
-          echo "name=$name" >> $env:GITHUB_OUTPUT
-
-      - name: Stage (*nix)
-        if: ${{ matrix.os != 'windows-latest' }}
-        id: stage_nix
+      - name: Stage pack
+        id: stage
         shell: bash
         run: |
           set -euo pipefail
           STAGE="runtime_pack"
           mkdir -p "$STAGE/llama_backend" "$STAGE/licenses"
           cp "target/release/${{ matrix.outplugin }}" "$STAGE/llama_backend/"
-
-          # llama.cpp license from vendored source
           cp "crates/backends/llama/llama-sys/llama.cpp/LICENSE" "$STAGE/licenses/llama.cpp.LICENSE"
 
           cat > "$STAGE/runtime.json" <<EOF
@@ -189,7 +170,8 @@ jobs:
             "variant": "${{ matrix.variant }}",
             "os": "${{ matrix.os }}",
             "arch": "${{ matrix.triplet }}",
-            "workflow_sha": "${{ github.sha }}"
+            "workflow_sha": "${{ github.sha }}",
+            "monolith": true
           }
           EOF
 
@@ -197,20 +179,20 @@ jobs:
           (cd "$STAGE" && zip -r "../$NAME" . >/dev/null)
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-      - name: SHA256
+      - name: SHA256 checksum
         shell: bash
         run: |
-          FILE="${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}"
+          FILE="${{ steps.stage.outputs.name }}"
           if command -v shasum >/dev/null 2>&1; then
             shasum -a 256 "$FILE" > "$FILE.sha256"
           else
             sha256sum "$FILE" > "$FILE.sha256"
           fi
 
-      - name: Upload artifact
+      - name: Upload runtime pack
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}
+          name: ${{ steps.stage.outputs.name }}
           path: |
-            ${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}
-            ${{ steps.stage_win.outputs.name || steps.stage_nix.outputs.name }}.sha256
+            ${{ steps.stage.outputs.name }}
+            ${{ steps.stage.outputs.name }}.sha256

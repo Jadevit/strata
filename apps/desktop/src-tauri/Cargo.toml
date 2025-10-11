@@ -20,14 +20,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 strata-abi = { workspace = true }
 strata-core = { workspace = true }
-llama-rs = { workspace = true }
-llama-sys = { workspace = true }
-llama-plugin = { workspace = true }
 once_cell = "1.21.3"
 dirs = "5"
 libloading = "0.8.9"
-
-[features]
-default = ["dynamic-link"]
-dynamic-link = ["llama-sys/dynamic-link", "llama-rs/dynamic-link"]
-utf8-trace = []

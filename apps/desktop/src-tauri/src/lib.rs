@@ -63,6 +63,33 @@ fn default_runtime_root() -> Option<PathBuf> {
     dirs::data_dir().map(|p| p.join("Strata").join("runtimes").join("llama"))
 }
 
+// -----------------------------
+// Runtime config reader helpers
+// -----------------------------
+use serde_json::Value as Json;
+
+fn read_runtime_json(root: &std::path::Path) -> Option<Json> {
+    let p = root.join("runtime.json");
+    let bytes = std::fs::read(&p).ok()?;
+    serde_json::from_slice::<Json>(&bytes).ok()
+}
+
+fn runtime_current_lib_dir(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let j = read_runtime_json(root)?;
+    j.get("llama")
+        .and_then(|ll| ll.get("current_lib_dir"))
+        .and_then(|v| v.as_str())
+        .map(std::path::PathBuf::from)
+}
+
+fn runtime_is_monolith(root: &std::path::Path) -> bool {
+    read_runtime_json(root)
+        .and_then(|j| j.get("llama").cloned())
+        .and_then(|ll| ll.get("monolith").cloned())
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 fn find_sidecar(app: &AppHandle) -> Option<PathBuf> {
     // 1) packaged app: bundled in Resources
     if let Some(p) = app
@@ -138,15 +165,15 @@ fn run_runtime_installer(
 
 #[cfg(target_os = "windows")]
 fn plugin_filename() -> &'static str {
-    "llama_plugin.dll"
+    "StrataLlama.dll"
 }
 #[cfg(target_os = "macos")]
 fn plugin_filename() -> &'static str {
-    "libllama_plugin.dylib"
+    "StrataLlama.dylib"
 }
 #[cfg(all(unix, not(target_os = "macos")))]
 fn plugin_filename() -> &'static str {
-    "libllama_plugin.so"
+    "StrataLlama.so"
 }
 
 #[cfg(target_os = "windows")]
@@ -162,55 +189,53 @@ fn runtime_llama_filename() -> &'static str {
     "libllama.so"
 }
 
-fn locate_runtime_llama_lib(plugin_path: &Path) -> Option<PathBuf> {
-    use std::env;
+fn locate_runtime_llama_lib(plugin_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::{env, path::PathBuf};
 
-    // 0) explicit override
+    // explicit override still wins
     if let Ok(p) = env::var("STRATA_LLAMA_LIB_PATH") {
         let p = PathBuf::from(p);
         if p.exists() {
-            eprintln!("[plugin] using STRATA_LLAMA_LIB_PATH = {}", p.display());
             return Some(p);
         }
     }
 
-    // 1) installer layout: <runtime>/llama_backend/<lib>
-    if let Some(root) = default_runtime_root() {
-        let p = root.join("llama_backend").join(runtime_llama_filename());
-        if p.exists() {
-            eprintln!("[plugin] found runtime llama lib: {}", p.display());
-            return Some(p);
+    // monolith packs: don't preload libllama.*
+    if let Some(root) = env::var("STRATA_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| default_runtime_root())
+    {
+        if runtime_is_monolith(&root) {
+            return None;
         }
-        // sometimes people put it flat
+        if let Some(dir) = runtime_current_lib_dir(&root) {
+            let p = dir.join(runtime_llama_filename());
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        // legacy fallbacks
         let flat = root.join(runtime_llama_filename());
         if flat.exists() {
-            eprintln!(
-                "[plugin] found runtime llama lib (flat): {}",
-                flat.display()
-            );
             return Some(flat);
         }
-    }
-
-    // 2) dev layout: sibling to the plugin under target/debug/resources/llama/<lib>
-    if let Some(dir) = plugin_path.parent() {
-        let candidate = dir
-            .join("resources")
-            .join("llama")
-            .join(runtime_llama_filename());
-        if candidate.exists() {
-            eprintln!(
-                "[plugin] found dev llama lib next to plugin: {}",
-                candidate.display()
-            );
-            return Some(candidate);
+        let nested = root.join("llama_backend").join(runtime_llama_filename());
+        if nested.exists() {
+            return Some(nested);
         }
     }
 
-    // 3) project-root dev path you mentioned
-    let dev = PathBuf::from("target/debug/resources/llama").join(runtime_llama_filename());
+    // dev fallback next to plugin build (kept for convenience)
+    if let Some(dir) = plugin_path.parent() {
+        let cand = dir.join("resources/llama").join(runtime_llama_filename());
+        if cand.exists() {
+            return Some(cand);
+        }
+    }
+    let dev =
+        std::path::PathBuf::from("target/debug/resources/llama").join(runtime_llama_filename());
     if dev.exists() {
-        eprintln!("[plugin] found dev llama lib: {}", dev.display());
         return Some(dev);
     }
 
@@ -224,7 +249,7 @@ fn locate_plugin_binary() -> Option<PathBuf> {
     if let Ok(p) = env::var("STRATA_PLUGIN_PATH") {
         let p = PathBuf::from(p);
         if p.exists() {
-            eprintln!("[plugin] using STRATA_PLUGIN_PATH = {}", p.display());
+            eprintln!("[plugin] STRATA_PLUGIN_PATH = {}", p.display());
             return Some(p);
         } else {
             eprintln!(
@@ -234,28 +259,47 @@ fn locate_plugin_binary() -> Option<PathBuf> {
         }
     }
 
-    // 1) installer layout (runtime dir)
+    // 1) installer layout via runtime.json -> current_lib_dir
     if let Some(root) = default_runtime_root() {
-        let direct = root.join(plugin_filename());
-        if direct.exists() {
-            eprintln!("[plugin] found in runtime root: {}", direct.display());
-            return Some(direct);
+        if let Some(cur) = runtime_current_lib_dir(&root) {
+            let p = cur.join(plugin_filename());
+            if p.exists() {
+                eprintln!("[plugin] from runtime.json: {}", p.display());
+                return Some(p);
+            }
+        }
+
+        // 1b) fallback: try known variants if runtime.json missing/old
+        for variant in ["cuda", "vulkan", "metal", "cpu"] {
+            let p = root
+                .join(variant)
+                .join("llama_backend")
+                .join(plugin_filename());
+            if p.exists() {
+                eprintln!("[plugin] found in {variant} pack: {}", p.display());
+                return Some(p);
+            }
+        }
+
+        // 1c) older layouts (just in case)
+        let flat = root.join("llama_backend").join(plugin_filename());
+        if flat.exists() {
+            eprintln!("[plugin] found flat runtime layout: {}", flat.display());
+            return Some(flat);
         }
         let alt = root.join("plugins").join(plugin_filename());
         if alt.exists() {
-            eprintln!("[plugin] found in runtime root/plugins: {}", alt.display());
+            eprintln!("[plugin] found runtime/plugins layout: {}", alt.display());
             return Some(alt);
         }
     }
 
-    // 2) dev: next to the plugin’s debug build
+    // 2) dev fallbacks
     let dbg = PathBuf::from("target/debug").join(plugin_filename());
     if dbg.exists() {
         eprintln!("[plugin] found debug build: {}", dbg.display());
         return Some(dbg);
     }
-
-    // 3) dev: release fallback
     let rel = PathBuf::from("target/release").join(plugin_filename());
     if rel.exists() {
         eprintln!("[plugin] found release build: {}", rel.display());
@@ -283,7 +327,7 @@ fn load_plugin_once() -> Result<&'static LoadedPlugin, String> {
         .get_or_init(|| {
             let path = locate_plugin_binary().ok_or_else(|| {
                 "llama plugin not found in any known location.\n\
-                                 Hint: export STRATA_PLUGIN_PATH=<full path to libllama_plugin.*>"
+                                 Hint: export STRATA_PLUGIN_PATH=<full path to libStrataLlama.*>"
                     .to_string()
             })?;
 
