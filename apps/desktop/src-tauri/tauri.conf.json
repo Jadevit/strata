@@ -6,7 +6,7 @@
 
   "build": {
     "beforeDevCommand": "pnpm -C apps/desktop dev",
-    "beforeBuildCommand": "pnpm -C apps/desktop build",
+    "beforeBuildCommand": "pnpm build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
 },
