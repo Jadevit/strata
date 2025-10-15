@@ -241,10 +241,27 @@ impl Drop for PluginBackend {
     fn drop(&mut self) {
         if !self.session.is_null() {
             unsafe { (self.plugin.api.llm.destroy_session)(self.session) };
-            self.session = ptr::null_mut();
+            self.session = std::ptr::null_mut();
         }
     }
 }
+
+impl Clone for PluginBackend {
+    fn clone(&self) -> Self {
+        // Shallow clone — we only ever use one generation at a time.
+        Self {
+            plugin: self.plugin,
+            session: self.session,
+            eos_token_id: self.eos_token_id,
+            ctx_len_hint: self.ctx_len_hint,
+        }
+    }
+}
+
+// SAFETY: PluginBackend’s raw session pointer comes from a C-ABI plugin.
+// It is never accessed concurrently — every call goes through a Mutex.
+unsafe impl Send for PluginBackend {}
+unsafe impl Sync for PluginBackend {}
 
 impl PluginBackend {
     /// Public constructor that forwards to the LLMBackend trait.

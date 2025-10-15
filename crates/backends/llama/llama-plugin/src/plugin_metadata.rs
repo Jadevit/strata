@@ -6,11 +6,11 @@ pub struct LlamaMetadataProvider;
 
 impl BackendMetadataProvider for LlamaMetadataProvider {
     fn can_handle(&self, file: &Path) -> bool {
-        llama_rs::metadata::metadata::can_handle(file)
+        crate::metadata::metadata::can_handle(file)
     }
 
     fn collect(&self, file: &Path) -> Result<ModelCoreInfo, String> {
-        use llama_rs::metadata::metadata::scrape_metadata;
+        use crate::metadata::scrape_metadata;
 
         let s = scrape_metadata(file)?;
         let fam_lc = s.family.as_deref().map(|f| f.to_ascii_lowercase());

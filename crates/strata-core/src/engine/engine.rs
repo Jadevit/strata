@@ -108,6 +108,11 @@ impl<B: LLMBackend> LLMEngine<B> {
         self.stop_flag.clone()
     }
 
+    /// Explicitly clear any cached KV / sequence state on the backend.
+    pub fn clear_kv_cache(&mut self) {
+        self.backend.clear_kv_cache();
+    }
+
     #[inline]
     fn clear_stop(&self) {
         self.stop_flag.store(false, Ordering::Relaxed);

@@ -1,16 +1,19 @@
 use std::sync::Arc;
-use strata_abi::backend::{ChatTurn, PromptFlavor};
+use std::{fs, path::PathBuf, sync::atomic::Ordering};
+
+use strata_abi::backend::ChatTurn;
 use strata_core::engine::engine::LLMEngine;
 use strata_core::format::prompt_format::PromptKind;
-
-use std::{fs, path::PathBuf, sync::atomic::Ordering};
 use tauri::{AppHandle, Emitter, Manager, State, path::BaseDirectory};
 
 use crate::app_state::AppState;
 use crate::model::{get_current_model, get_model_path, set_current_model};
 use crate::plugin::PluginBackend;
 
-// --- prompt strategy selection ---
+// ---------------------------------------------------------------------------
+// Prompt strategy
+// ---------------------------------------------------------------------------
+
 fn pick_prompt_strategy(model_id: Option<String>, system: Option<String>) -> PromptKind {
     if let Some(id) = model_id {
         let id_lc = id.to_lowercase();
@@ -21,7 +24,10 @@ fn pick_prompt_strategy(model_id: Option<String>, system: Option<String>) -> Pro
     PromptKind::ChatMl { system }
 }
 
-// --- system prompt helpers (kept local to engine for simplicity) ---
+// ---------------------------------------------------------------------------
+// System prompt loaders
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub async fn load_system_prompt(app: AppHandle) -> Result<String, String> {
     if let Some(path) = app
@@ -63,7 +69,53 @@ fn load_system_prompt_sync(app: &AppHandle) -> Option<String> {
     None
 }
 
-// --- non-streaming inference ---
+// ---------------------------------------------------------------------------
+// Engine persistence (reuse same llama session across prompts)
+// ---------------------------------------------------------------------------
+
+fn ensure_engine_for_model(
+    app: &AppHandle,
+    state: &AppState,
+    requested_model: Option<String>,
+) -> Result<(), String> {
+    // If model ID changed, clear existing engine → explicitly clear KV → drop backend.
+    if let Some(id) = requested_model.as_ref() {
+        if get_current_model().as_ref() != Some(id) {
+            // If there's an existing engine, clear its KV cache before dropping.
+            if let Some(engine) = state.engine.lock().unwrap().as_mut() {
+                eprintln!("🧹 [engine] Model switch detected, clearing KV cache before drop");
+                engine.clear_kv_cache();
+            }
+
+            // Drop the engine (will also drop backend session).
+            *state.engine.lock().unwrap() = None;
+            set_current_model(id.clone());
+        }
+    }
+
+    // Initialize a new engine if not already loaded.
+    let mut slot = state.engine.lock().unwrap();
+    if slot.is_none() {
+        let model_path = get_model_path(app)?;
+        let backend = PluginBackend::load(&model_path)?;
+        let system = load_system_prompt_sync(app);
+
+        let mut engine = LLMEngine::with_auto(backend, system.clone());
+        engine.set_strategy(pick_prompt_strategy(
+            requested_model.or_else(get_current_model),
+            system,
+        ));
+
+        *slot = Some(engine);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Non-streaming inference
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub async fn run_llm(
     prompt: String,
@@ -72,42 +124,37 @@ pub async fn run_llm(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    if let Some(ref id) = model_id {
-        set_current_model(id.clone());
-    }
     {
         let mut mem = state.memory.lock().unwrap();
         mem.push_user(prompt.clone());
     }
 
     let app2 = app.clone();
-    let state_mem = Arc::clone(&state.memory);
-    let state_stop = Arc::clone(&state.current_stop);
+    let state2 = AppState {
+        memory: Arc::clone(&state.memory),
+        current_stop: Arc::clone(&state.current_stop),
+        engine: Arc::clone(&state.engine),
+    };
     let model_id2 = model_id.clone();
 
     let reply = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let model_path = get_model_path(&app2)?;
-        let backend = PluginBackend::load(&model_path)?;
-        let system = load_system_prompt_sync(&app2);
+        ensure_engine_for_model(&app2, &state2, model_id2)?;
 
-        let mut engine = LLMEngine::with_auto(backend, system.clone());
-        engine.set_strategy(pick_prompt_strategy(
-            model_id2.or_else(get_current_model),
-            system,
-        ));
+        let mut guard = state2.engine.lock().unwrap();
+        let engine = guard.as_mut().expect("engine initialized");
 
         {
             let stop = engine.stop_handle();
-            *state_stop.lock().unwrap() = Some(stop);
+            *state2.current_stop.lock().unwrap() = Some(stop);
         }
 
         let turns: Vec<ChatTurn> = {
-            let mem = state_mem.lock().unwrap();
+            let mem = state2.memory.lock().unwrap();
             mem.turns().to_vec()
         };
 
         let out = engine.infer_chat(&turns)?;
-        *state_stop.lock().unwrap() = None;
+        *state2.current_stop.lock().unwrap() = None;
         Ok(out)
     })
     .await
@@ -117,10 +164,14 @@ pub async fn run_llm(
         let mut mem = state.memory.lock().unwrap();
         mem.push_assistant(reply.clone());
     }
+
     Ok(reply)
 }
 
-// --- streaming inference ---
+// ---------------------------------------------------------------------------
+// Streaming inference
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub async fn run_llm_stream(
     prompt: String,
@@ -129,37 +180,32 @@ pub async fn run_llm_stream(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    if let Some(ref id) = model_id {
-        set_current_model(id.clone());
-    }
     {
         let mut mem = state.memory.lock().unwrap();
         mem.push_user(prompt.clone());
     }
 
     let app2 = app.clone();
-    let state_mem = Arc::clone(&state.memory);
-    let state_stop = Arc::clone(&state.current_stop);
+    let state2 = AppState {
+        memory: Arc::clone(&state.memory),
+        current_stop: Arc::clone(&state.current_stop),
+        engine: Arc::clone(&state.engine),
+    };
     let model_id2 = model_id.clone();
 
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let model_path = get_model_path(&app2)?;
-        let backend = PluginBackend::load(&model_path)?;
-        let system = load_system_prompt_sync(&app2);
+        ensure_engine_for_model(&app2, &state2, model_id2)?;
 
-        let mut engine = LLMEngine::with_auto(backend, system.clone());
-        engine.set_strategy(pick_prompt_strategy(
-            model_id2.or_else(get_current_model),
-            system,
-        ));
+        let mut guard = state2.engine.lock().unwrap();
+        let engine = guard.as_mut().expect("engine initialized");
 
         {
             let stop = engine.stop_handle();
-            *state_stop.lock().unwrap() = Some(stop);
+            *state2.current_stop.lock().unwrap() = Some(stop);
         }
 
         let turns: Vec<ChatTurn> = {
-            let mem = state_mem.lock().unwrap();
+            let mem = state2.memory.lock().unwrap();
             mem.turns().to_vec()
         };
 
@@ -167,11 +213,13 @@ pub async fn run_llm_stream(
             let _ = app2.emit("llm-stream", serde_json::json!({ "delta": delta }));
         })?;
 
-        *state_stop.lock().unwrap() = None;
+        *state2.current_stop.lock().unwrap() = None;
+
         {
-            let mut mem = state_mem.lock().unwrap();
+            let mut mem = state2.memory.lock().unwrap();
             mem.push_assistant(final_text.clone());
         }
+
         let _ = app2.emit("llm-complete", serde_json::json!({ "text": final_text }));
         Ok(final_text)
     })
@@ -181,7 +229,10 @@ pub async fn run_llm_stream(
     Ok(())
 }
 
-// --- cancel ---
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
 pub fn cancel_generation(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(flag) = state.current_stop.lock().unwrap().as_ref() {

@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use llama_rs::{
+use crate::{
     backends::dispatch::Backend as LlamaCppBackend,
     context::LlamaContext,
     model::LlamaModel,

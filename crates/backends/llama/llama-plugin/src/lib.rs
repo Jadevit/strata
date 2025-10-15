@@ -1,10 +1,24 @@
 //! Llama plugin: C-ABI shim exposing metadata + LLM APIs at runtime.
 
-mod backend;
-mod metadata;
+// --- plugin-local modules
+mod backend; // LlamaBackendImpl (engine adapter)
+mod plugin_metadata; // BackendMetadataProvider for GGUF files
+
+// --- internal modules (merged from llama-rs) so `crate::*` paths resolve
+pub mod backends;
+pub mod batch;
+pub mod cache;
+pub mod context;
+pub mod debug;
+pub mod ffi;
+pub mod metadata; // NOTE: this is the internal metadata module tree
+pub mod model;
+pub mod params;
+pub mod sampling;
+pub mod token;
 
 use backend::LlamaBackendImpl;
-use metadata::LlamaMetadataProvider;
+use plugin_metadata::LlamaMetadataProvider;
 
 use core::ffi::{c_char, c_void};
 use std::{
@@ -50,7 +64,6 @@ unsafe extern "C" fn last_error() -> StrataString {
 // -----------------------------
 
 fn make_string(s: &CStr) -> StrataString {
-    // Return a plugin-owned copy that the host will free via free_string
     let bytes = s.to_bytes();
     let mut v = Vec::with_capacity(bytes.len() + 1);
     v.extend_from_slice(bytes);
@@ -92,8 +105,7 @@ unsafe extern "C" fn meta_can_handle(model_path: *const c_char) -> bool {
         Err(_) => return false,
     };
     let prov = LlamaMetadataProvider;
-    let p = Path::new(s);
-    prov.can_handle(p)
+    prov.can_handle(Path::new(s))
 }
 
 unsafe extern "C" fn meta_collect_json(model_path: *const c_char) -> StrataString {
@@ -115,8 +127,7 @@ unsafe extern "C" fn meta_collect_json(model_path: *const c_char) -> StrataStrin
         }
     };
     let prov = LlamaMetadataProvider;
-    let p = Path::new(s);
-    match prov.collect(p) {
+    match prov.collect(Path::new(s)) {
         Ok(info) => match serde_json::to_string(&info) {
             Ok(js) => make_string_from_utf8(&js),
             Err(e) => {
@@ -158,9 +169,7 @@ unsafe extern "C" fn llm_create_session(model_path: *const c_char) -> *mut c_voi
             return ptr::null_mut();
         }
     };
-    let p = Path::new(s);
-
-    match <LlamaBackendImpl as LLMBackend>::load(p) {
+    match <LlamaBackendImpl as LLMBackend>::load(Path::new(s)) {
         Ok(inner) => Box::into_raw(Box::new(Session { inner })) as *mut c_void,
         Err(e) => {
             set_last_error(e);
@@ -232,7 +241,6 @@ unsafe extern "C" fn llm_detokenize_utf8(
         .copied()
         .map(strata_abi::token::Token)
         .collect::<Vec<_>>();
-
     match s
         .inner
         .detokenize_range(&toks, 0, remove_special, unparse_special)
@@ -352,13 +360,11 @@ static mut API: PluginApi = PluginApi {
 #[no_mangle]
 pub extern "C" fn strata_plugin_entry_v1() -> *const PluginApi {
     INIT.call_once(|| unsafe {
-        // Fill info once; keep CString memory leaked for process lifetime.
         let id = CString::new("llama").unwrap();
         let ver = CString::new("0.1.0").unwrap();
         API.info.abi_version = STRATA_ABI_VERSION;
         API.info.id = Box::leak(id.into_boxed_c_str()).as_ptr();
         API.info.semver = Box::leak(ver.into_boxed_c_str()).as_ptr();
     });
-
     unsafe { &API as *const PluginApi }
 }
