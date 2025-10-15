@@ -29,6 +29,12 @@ pub struct LLMEngine<B: LLMBackend> {
 
     /// STOP flag (flipped by the host/UI to cancel mid-generation).
     stop_flag: Arc<AtomicBool>,
+
+    /// ========== KV reuse bookkeeping ==========
+    /// The exact prompt tokens we prefed last time; used to compute the delta on next turn.
+    prev_prompt_tokens: Vec<Token>,
+    /// Whether the backend KV currently corresponds to `prev_prompt_tokens`.
+    kv_warm: bool,
 }
 
 impl<B: LLMBackend> LLMEngine<B> {
@@ -42,6 +48,9 @@ impl<B: LLMBackend> LLMEngine<B> {
             memory: SessionMemory::new(),
             prompt_token_budget: 3072, // reasonable default; refined in `with_auto`
             stop_flag: Arc::new(AtomicBool::new(false)),
+
+            prev_prompt_tokens: Vec::new(),
+            kv_warm: false,
         }
     }
 
@@ -133,7 +142,6 @@ impl<B: LLMBackend> LLMEngine<B> {
             .system_prompt
             .as_deref()
             .or_else(|| system_from_turns(turns));
-
         let formatted = self.prompt_strategy.format_dialog(turns, sys);
         self.infer_with_formatted(formatted)
     }
@@ -162,7 +170,6 @@ impl<B: LLMBackend> LLMEngine<B> {
             .system_prompt
             .as_deref()
             .or_else(|| system_from_turns(turns));
-
         let formatted = self.prompt_strategy.format_dialog(turns, sys);
         self.stream_with_formatted(formatted, on_delta)
     }
@@ -209,14 +216,65 @@ impl<B: LLMBackend> LLMEngine<B> {
         if step_limit == 0 { 32 } else { step_limit }
     }
 
-    /// Prefill in 64-token chunks. Returns `(n_past, token_history, detok_start_idx)`.
-    fn prefill(&mut self, prompt_tokens: &[Token]) -> Result<(i32, Vec<Token>, usize), String> {
-        const PREFILL_CHUNK: usize = 64; // must be <= backend batch size
-        let mut n_past: i32 = 0;
+    /// Compute the longest common prefix (in tokens) between two sequences.
+    #[inline]
+    fn lcp_len(&self, a: &[Token], b: &[Token]) -> usize {
+        let n = a.len().min(b.len());
+        for i in 0..n {
+            if a[i] != b[i] {
+                return i;
+            }
+        }
+        n
+    }
+
+    /// **Incremental** prefill using KV reuse.
+    ///
+    /// Strategy:
+    /// - If the new prompt is an append-only extension of the previous one, reuse KV and
+    ///   evaluate only the delta starting at `lcp`.
+    /// - Otherwise, clear KV and rebuild from token 0.
+    /// Returns `(n_past, token_history, detok_start_idx)`, where `token_history` mirrors the
+    /// current *prompt* tokens (assistant output will be appended later).
+    fn prefill_incremental(
+        &mut self,
+        prompt_tokens: &[Token],
+    ) -> Result<(i32, Vec<Token>, usize), String> {
+        const PREFILL_CHUNK: usize = 64; // tie this into hwprof later
+
+        // 1) Compare with previous prompt
+        let lcp = self.lcp_len(&self.prev_prompt_tokens, prompt_tokens);
+        let append_only = self.kv_warm && lcp == self.prev_prompt_tokens.len();
+
+        if append_only {
+            println!(
+                "♻️  [prefill] Reusing KV (lcp={}, prev_len={}, new_len={})",
+                lcp,
+                self.prev_prompt_tokens.len(),
+                prompt_tokens.len()
+            );
+        } else {
+            println!(
+                "🧹 [prefill] Prompt diverged or cold KV (lcp={}, prev_len={}, new_len={}) → clearing KV",
+                lcp,
+                self.prev_prompt_tokens.len(),
+                prompt_tokens.len()
+            );
+            self.backend.clear_kv_cache(); // no-op for backends without KV
+        }
+
+        let mut n_past: i32 = if append_only { lcp as i32 } else { 0 };
         let mut token_history: Vec<Token> =
             Vec::with_capacity(prompt_tokens.len().saturating_add(1024));
 
-        for (i, chunk) in prompt_tokens.chunks(PREFILL_CHUNK).enumerate() {
+        // mirror the prompt up to start_idx (either lcp or 0)
+        let start_idx = if append_only { lcp } else { 0 };
+        if start_idx > 0 {
+            token_history.extend_from_slice(&prompt_tokens[..start_idx]);
+        }
+
+        // 2) Evaluate only the delta
+        for (i, chunk) in prompt_tokens[start_idx..].chunks(PREFILL_CHUNK).enumerate() {
             if self.stop_flag.load(Ordering::Relaxed) {
                 println!("⏹️ [prefill] STOP requested during prefill.");
                 break;
@@ -227,13 +285,17 @@ impl<B: LLMBackend> LLMEngine<B> {
             );
             self.backend
                 .evaluate(chunk, n_past)
-                .map_err(|e| format!("❌ [infer] Initial prefill failed: {e}"))?;
+                .map_err(|e| format!("❌ [infer] Prefill failed: {e}"))?;
             token_history.extend_from_slice(chunk);
             n_past += chunk.len() as i32;
         }
-        println!("✅ [prefill] Done ({} tokens)", n_past);
+        println!("✅ [prefill] Done ({} tokens); kv_warm = true", n_past);
 
-        let detok_start_idx = token_history.len(); // start detokenizing *after* the prompt
+        // 3) KV now matches the new prompt
+        self.prev_prompt_tokens = token_history.clone();
+        self.kv_warm = true;
+
+        let detok_start_idx = token_history.len(); // start detok after the prompt
         Ok((n_past, token_history, detok_start_idx))
     }
 
@@ -262,9 +324,9 @@ impl<B: LLMBackend> LLMEngine<B> {
             let step_limit = self.compute_step_limit(prompt_tokens.len());
             println!("🧮 step_limit={}", step_limit);
 
-            // Prefill (STOP-aware).
+            // Prefill (incremental, STOP-aware).
             let (mut n_past, mut token_history, mut detok_start_idx) =
-                self.prefill(&prompt_tokens)?;
+                self.prefill_incremental(&prompt_tokens)?;
 
             // UTF-8 streaming state (accumulate valid prefix only).
             let mut out_text = String::new();
@@ -315,8 +377,11 @@ impl<B: LLMBackend> LLMEngine<B> {
                     }
                 }
 
-                // TODO: honor `formatted.stop_sequences` if you want early stopping on templates.
+                // TODO: honor `formatted.stop_sequences`.
             }
+
+            // Mirror generated tokens into prev_prompt_tokens so the next turn LCP sees them.
+            self.prev_prompt_tokens = token_history.clone();
 
             let out_text = out_text.trim().to_string();
             println!(
@@ -360,9 +425,9 @@ impl<B: LLMBackend> LLMEngine<B> {
             let step_limit = self.compute_step_limit(prompt_tokens.len());
             println!("🧮 [stream] step_limit={}", step_limit);
 
-            // Prefill (STOP-aware).
+            // Prefill (incremental, STOP-aware).
             let (mut n_past, mut token_history, mut detok_start_idx) =
-                self.prefill(&prompt_tokens)?;
+                self.prefill_incremental(&prompt_tokens)?;
 
             // UTF-8 streaming state.
             let mut out_text = String::new();
@@ -417,8 +482,11 @@ impl<B: LLMBackend> LLMEngine<B> {
                     }
                 }
 
-                // TODO: honor `formatted.stop_sequences` here as well if desired.
+                // TODO: honor `formatted.stop_sequences`.
             }
+
+            // Mirror generated tokens into prev_prompt_tokens so the next turn LCP sees them.
+            self.prev_prompt_tokens = token_history.clone();
 
             let out_text = out_text.trim().to_string();
             println!(

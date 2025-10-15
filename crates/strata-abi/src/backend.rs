@@ -112,6 +112,16 @@ pub trait LLMBackend {
         &[]
     }
 
+    /// **NEW:** Clear any cached sequence/KV state while keeping the model loaded.
+    /// Backends that don’t maintain a KV can leave the default no-op.
+    fn clear_kv_cache(&mut self) {}
+
+    /// **Optional:** report how many tokens are currently cached (for debug/telemetry).
+    /// Backends without a notion of KV length should return `None`.
+    fn kv_len_hint(&self) -> Option<usize> {
+        None
+    }
+
     /// UTF-8 detokenizer for a range inside `token_history`. Defaults to a slow but safe
     /// loop over `decode_token()`. Backends should override to use native detokenizers.
     fn detokenize_range(

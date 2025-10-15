@@ -205,8 +205,20 @@ impl LLMBackend for LlamaBackendImpl {
             return Ok(Vec::new());
         }
         let toks: Vec<LlamaToken> = slice.iter().map(|Token(t)| LlamaToken(*t)).collect();
-
         self.context
             .detokenize_bytes(&toks, remove_special, unparse_special)
+    }
+
+    // ────────────────────────────────────────────────
+    // KV cache plumbing
+    // ────────────────────────────────────────────────
+
+    fn clear_kv_cache(&mut self) {
+        println!("🧹 [llama-plugin] Clearing KV cache");
+        self.context.clear_kv_cache();
+    }
+
+    fn kv_len_hint(&self) -> Option<usize> {
+        Some(self.context.n_ctx as usize)
     }
 }

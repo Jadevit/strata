@@ -50,22 +50,19 @@ pub fn user_models_root(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Return a dev fallback `./resources/models` if present (for development only).
 fn dev_models_root() -> Option<PathBuf> {
-    // 1) packaged resources/models (when available)
-    // NOTE: We *don’t* require this in production; just a dev fallback.
     let cwd_res = std::env::current_dir()
         .ok()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("resources")
         .join("models");
     if cwd_res.exists() {
-        return Some(cwd_res);
+        Some(cwd_res)
+    } else {
+        None
     }
-    None
 }
 
 /// Preferred models root used for resolving selected model paths.
-/// - Always the user library dir.
-/// - `list_available_models` will also surface dev models if user library is empty.
 pub fn resolve_models_root(app: &AppHandle) -> Result<PathBuf, String> {
     user_models_root(app)
 }
@@ -127,7 +124,6 @@ impl ModelEntry {
 }
 
 // ----------------- selection -----------------
-
 static CURRENT_MODEL_ID: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 
 pub fn set_current_model(id: String) {
@@ -143,23 +139,28 @@ pub fn get_current_model() -> Option<String> {
 }
 
 // ----------------- listing + resolving -----------------
-
-/// List available models prioritizing the user library.
-/// If the user library is **empty**, include dev fallback `./resources/models`.
 pub fn list_available_models(app: AppHandle) -> Result<Vec<ModelEntry>, String> {
     let user_root = user_models_root(&app)?;
     let mut entries = Vec::new();
 
-    walk_dir(&user_root, &user_root, &mut entries, &mut HashSet::new())?;
+    walk_dir(
+        &user_root,
+        &user_root,
+        &mut entries,
+        &mut std::collections::HashSet::new(),
+    )?;
 
-    // Dev fallback only if user library is empty (avoid id collisions)
     if entries.is_empty() {
         if let Some(dev_root) = dev_models_root() {
-            walk_dir(&dev_root, &dev_root, &mut entries, &mut HashSet::new())?;
+            walk_dir(
+                &dev_root,
+                &dev_root,
+                &mut entries,
+                &mut std::collections::HashSet::new(),
+            )?;
         }
     }
 
-    // Pleasant sort: family then name
     entries.sort_by(|a, b| {
         (a.family.to_lowercase(), a.name.to_lowercase())
             .cmp(&(b.family.to_lowercase(), b.name.to_lowercase()))
@@ -172,7 +173,7 @@ fn walk_dir(
     models_root: &Path,
     dir: &Path,
     entries: &mut Vec<ModelEntry>,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut std::collections::HashSet<PathBuf>,
 ) -> Result<(), String> {
     if !visited.insert(dir.to_path_buf()) {
         return Ok(());
@@ -195,9 +196,7 @@ fn walk_dir(
     Ok(())
 }
 
-/// Resolve the **absolute path** for the current id:
-/// - First try user library
-/// - If missing there and library is empty, try dev fallback
+/// Resolve the **absolute path** for the current id.
 pub fn get_model_path(app: &AppHandle) -> Result<PathBuf, String> {
     let rel_id = get_current_model().ok_or("No model selected")?;
     let user_root = user_models_root(app)?;
@@ -212,14 +211,10 @@ pub fn get_model_path(app: &AppHandle) -> Result<PathBuf, String> {
             return Ok(abs_dev);
         }
     }
-
     Err(format!("Selected model not found: {}", rel_id))
 }
 
 // ----------------- import -----------------
-
-/// Import a model file into the **user library** (by copy).
-/// If `family` is provided, place the file under that subdir; otherwise derive from filename.
 pub fn import_into_user_library(
     app: &AppHandle,
     src: &Path,
@@ -248,7 +243,6 @@ pub fn import_into_user_library(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .or_else(|| {
-            // default: parent dir name or "Library"
             src.parent()
                 .and_then(Path::file_name)
                 .and_then(|n| n.to_str())
@@ -270,14 +264,51 @@ pub fn import_into_user_library(
         .ok_or_else(|| "Failed to build ModelEntry after import".into())
 }
 
-/// Copy with a temporary file then rename to avoid partial file states.
-fn copy_atomic(src: &Path, dest: &Path) -> io::Result<()> {
+fn copy_atomic(src: &Path, dest: &Path) -> std::io::Result<()> {
     let tmp = dest.with_extension("tmpcopy");
     if tmp.exists() {
         let _ = fs::remove_file(&tmp);
     }
     fs::copy(src, &tmp)?;
-    // Preserve original filename atomically
     fs::rename(&tmp, dest)?;
     Ok(())
+}
+
+// ----------------- Tauri commands for model mgmt -----------------
+#[tauri::command]
+pub async fn get_model_list(app: AppHandle) -> Result<Vec<ModelEntry>, String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || list_available_models(app2))
+        .await
+        .map_err(|e| format!("join error: {e}"))?
+}
+
+#[tauri::command]
+pub fn get_active_model() -> Option<String> {
+    get_current_model()
+}
+
+#[tauri::command]
+pub fn set_active_model_cmd(name: String) {
+    set_current_model(name);
+}
+
+#[tauri::command]
+pub fn get_models_root(app: AppHandle) -> Result<String, String> {
+    resolve_models_root(&app).map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+pub async fn import_model(
+    app: AppHandle,
+    src_path: String,
+    family: Option<String>,
+) -> Result<ModelEntry, String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let entry = import_into_user_library(&app2, Path::new(&src_path), family.as_deref())?;
+        Ok::<_, String>(entry)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
