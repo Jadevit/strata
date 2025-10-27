@@ -1,10 +1,22 @@
 //! Llama plugin: C-ABI shim exposing metadata + LLM APIs at runtime.
 
-mod backend;
-mod metadata;
+// --- internal modules (merged from llama-rs) so `crate::*` paths resolve
+pub mod adapter;
+pub mod backends;
+pub mod batch;
+pub mod cache;
+pub mod context;
+pub mod debug;
+pub mod ffi; // contains ffi::{context, metadata, ...}
+pub mod format;
+pub mod metadata; // safe scraper + provider (replaces old plugin_metadata)
+pub mod model;
+pub mod params;
+pub mod sampling;
+pub mod token;
 
-use backend::LlamaBackendImpl;
-use metadata::LlamaMetadataProvider;
+use crate::adapter::LlamaBackendImpl;
+use crate::metadata::LlamaMetadataProvider;
 
 use core::ffi::{c_char, c_void};
 use std::{
@@ -50,7 +62,6 @@ unsafe extern "C" fn last_error() -> StrataString {
 // -----------------------------
 
 fn make_string(s: &CStr) -> StrataString {
-    // Return a plugin-owned copy that the host will free via free_string
     let bytes = s.to_bytes();
     let mut v = Vec::with_capacity(bytes.len() + 1);
     v.extend_from_slice(bytes);
@@ -92,8 +103,7 @@ unsafe extern "C" fn meta_can_handle(model_path: *const c_char) -> bool {
         Err(_) => return false,
     };
     let prov = LlamaMetadataProvider;
-    let p = Path::new(s);
-    prov.can_handle(p)
+    prov.can_handle(Path::new(s))
 }
 
 unsafe extern "C" fn meta_collect_json(model_path: *const c_char) -> StrataString {
@@ -115,8 +125,7 @@ unsafe extern "C" fn meta_collect_json(model_path: *const c_char) -> StrataStrin
         }
     };
     let prov = LlamaMetadataProvider;
-    let p = Path::new(s);
-    match prov.collect(p) {
+    match prov.collect(Path::new(s)) {
         Ok(info) => match serde_json::to_string(&info) {
             Ok(js) => make_string_from_utf8(&js),
             Err(e) => {
@@ -158,9 +167,7 @@ unsafe extern "C" fn llm_create_session(model_path: *const c_char) -> *mut c_voi
             return ptr::null_mut();
         }
     };
-    let p = Path::new(s);
-
-    match <LlamaBackendImpl as LLMBackend>::load(p) {
+    match <LlamaBackendImpl as LLMBackend>::load(Path::new(s)) {
         Ok(inner) => Box::into_raw(Box::new(Session { inner })) as *mut c_void,
         Err(e) => {
             set_last_error(e);
@@ -212,6 +219,80 @@ unsafe extern "C" fn llm_tokenize_utf8(session: *mut c_void, text: *const c_char
     }
 }
 
+unsafe extern "C" fn llm_format_chat_json(
+    session: *mut ::core::ffi::c_void,
+    turns_json: *const ::std::os::raw::c_char,
+    _add_assistant: bool,
+) -> strata_abi::ffi::StrataString {
+    if session.is_null() || turns_json.is_null() {
+        set_last_error("null session/turns_json");
+        return strata_abi::ffi::StrataString {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+        };
+    }
+
+    let sref = &mut *(session as *mut Session);
+
+    let js = match ::std::ffi::CStr::from_ptr(turns_json).to_str() {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(format!("invalid UTF-8 in turns_json: {e}"));
+            return strata_abi::ffi::StrataString {
+                ptr: std::ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    let turns: Vec<strata_abi::backend::ChatTurn> = match ::serde_json::from_str(js) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(format!("bad ChatTurn JSON: {e}"));
+            return strata_abi::ffi::StrataString {
+                ptr: std::ptr::null_mut(),
+                len: 0,
+            };
+        }
+    };
+
+    match sref.inner.apply_native_chat_template(&turns) {
+        Some(text) => {
+            // Compose the JSON shape expected by the host (FormattedPrompt)
+            let stops: Vec<String> = sref
+                .inner
+                .default_stop_strings()
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+
+            let payload = match ::serde_json::to_string(&::serde_json::json!({
+                "text": text,
+                "stop_sequences": stops,
+                "add_space_prefix": true
+            })) {
+                Ok(s) => s,
+                Err(e) => {
+                    set_last_error(format!("serde_json failed: {e}"));
+                    return strata_abi::ffi::StrataString {
+                        ptr: std::ptr::null_mut(),
+                        len: 0,
+                    };
+                }
+            };
+
+            make_string_from_utf8(&payload)
+        }
+        None => {
+            set_last_error("no native chat template available for this model/backend");
+            strata_abi::ffi::StrataString {
+                ptr: std::ptr::null_mut(),
+                len: 0,
+            }
+        }
+    }
+}
+
 unsafe extern "C" fn llm_detokenize_utf8(
     session: *mut c_void,
     tokens: *const i32,
@@ -232,7 +313,6 @@ unsafe extern "C" fn llm_detokenize_utf8(
         .copied()
         .map(strata_abi::token::Token)
         .collect::<Vec<_>>();
-
     match s
         .inner
         .detokenize_range(&toks, 0, remove_special, unparse_special)
@@ -319,6 +399,36 @@ unsafe extern "C" fn llm_decode_token(session: *mut c_void, token_id: i32) -> St
     }
 }
 
+unsafe extern "C" fn llm_clear_kv_cache(session: *mut c_void) {
+    if session.is_null() {
+        return;
+    }
+    let sref = &mut *(session as *mut Session);
+    sref.inner.clear_kv_cache();
+}
+
+unsafe extern "C" fn llm_kv_len_hint(session: *mut c_void) -> i32 {
+    if session.is_null() {
+        return -1;
+    }
+    let sref = &*(session as *mut Session);
+    match sref.inner.kv_len_hint() {
+        Some(n) => n as i32,
+        None => -1,
+    }
+}
+
+unsafe extern "C" fn llm_context_window_hint(session: *mut c_void) -> i32 {
+    if session.is_null() {
+        return 0;
+    }
+    let sref = &*(session as *mut Session);
+    match sref.inner.context_window_hint() {
+        Some(n) => n as i32,
+        None => 0,
+    }
+}
+
 // -----------------------------
 // Static PluginApi surface
 // -----------------------------
@@ -327,8 +437,8 @@ static INIT: Once = Once::new();
 static mut API: PluginApi = PluginApi {
     info: PluginInfo {
         abi_version: 0,
-        id: ptr::null(),
-        semver: ptr::null(),
+        id: std::ptr::null(),
+        semver: std::ptr::null(),
     },
     metadata: MetadataApi {
         can_handle: meta_can_handle,
@@ -338,27 +448,34 @@ static mut API: PluginApi = PluginApi {
     llm: LlmApi {
         create_session: llm_create_session,
         destroy_session: llm_destroy_session,
+
         tokenize_utf8: llm_tokenize_utf8,
         free_ints: free_ints,
+
         evaluate: llm_evaluate,
         sample_json: llm_sample_json,
         decode_token: llm_decode_token,
+
         detokenize_utf8: llm_detokenize_utf8,
+        format_chat_json: llm_format_chat_json,
+
         last_error: last_error,
         free_string: free_string,
+
+        clear_kv_cache: llm_clear_kv_cache,
+        kv_len_hint: llm_kv_len_hint,
+        context_window_hint: llm_context_window_hint,
     },
 };
 
 #[no_mangle]
 pub extern "C" fn strata_plugin_entry_v1() -> *const PluginApi {
     INIT.call_once(|| unsafe {
-        // Fill info once; keep CString memory leaked for process lifetime.
         let id = CString::new("llama").unwrap();
         let ver = CString::new("0.1.0").unwrap();
         API.info.abi_version = STRATA_ABI_VERSION;
         API.info.id = Box::leak(id.into_boxed_c_str()).as_ptr();
         API.info.semver = Box::leak(ver.into_boxed_c_str()).as_ptr();
     });
-
     unsafe { &API as *const PluginApi }
 }

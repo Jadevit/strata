@@ -37,7 +37,7 @@ pub struct ModelCoreInfo {
     /// Native chat template string if provided by the model.
     pub chat_template: Option<String>,
     /// Hint for a reasonable default prompt wrapper when no native template is used.
-    pub prompt_flavor_hint: Option<PromptFlavor>,
+    pub prompt_flavor_hint: Option<String>,
 
     /// Anything else the backend scraped (simple flattened map).
     pub raw: HashMap<String, String>,
