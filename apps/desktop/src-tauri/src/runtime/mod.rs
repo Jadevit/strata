@@ -3,10 +3,11 @@
 mod discover;
 mod install;
 
-// Re-export discover helpers for other modules (plugin locate, etc.)
-pub use discover::{default_runtime_root, runtime_current_lib_dir, runtime_is_monolith};
+pub use discover::{
+    default_runtime_root, runtime_cpu_fallback_path, runtime_current_lib_dir, runtime_is_monolith,
+    runtime_plugin_filename,
+};
 
-/// Returns true if a runtime.json exists in the default runtime root.
 #[tauri::command]
 pub fn is_llama_runtime_installed() -> bool {
     default_runtime_root()
@@ -14,7 +15,6 @@ pub fn is_llama_runtime_installed() -> bool {
         .unwrap_or(false)
 }
 
-/// Launch the sidecar installer with optional args.
 #[tauri::command]
 pub fn run_runtime_installer(
     prefer: Option<String>,

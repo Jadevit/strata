@@ -1,3 +1,10 @@
+// src-tauri/src/engine/mod.rs
+//
+// Engine-facing Tauri commands and small shims.
+// - We keep service.rs private and expose only the safe entry points here.
+// - New: `preload_engine` builds the engine/context once for the currently-selected model.
+// - Reinit shim stays crate-visible so other modules can request clean swaps without touching service.rs.
+
 mod loader;
 mod service;
 
@@ -8,16 +15,16 @@ use tauri::{AppHandle, Emitter, State};
 
 use service::ensure_engine_for_model;
 
-/// Keep Tauri commands at module root for consistency with model/runtime.
+// ---------------------------
+// Public Tauri commands
+// ---------------------------
 
 #[tauri::command]
 pub async fn load_system_prompt(app: AppHandle) -> Result<String, String> {
     loader::load_system_prompt_impl(app).await
 }
 
-// ---------------------------
 // Non-streaming inference
-// ---------------------------
 #[tauri::command]
 pub async fn run_llm(
     prompt: String,
@@ -71,9 +78,7 @@ pub async fn run_llm(
     Ok(reply)
 }
 
-// ---------------------------
 // Streaming inference
-// ---------------------------
 #[tauri::command]
 pub async fn run_llm_stream(
     prompt: String,
@@ -131,13 +136,54 @@ pub async fn run_llm_stream(
     Ok(())
 }
 
-// ---------------------------
 // Cancel
-// ---------------------------
 #[tauri::command]
 pub fn cancel_generation(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(flag) = state.current_stop.lock().unwrap().as_ref() {
         flag.store(true, Ordering::Relaxed);
     }
     Ok(())
+}
+
+// ---------------------------
+// New: Engine preload
+// ---------------------------
+
+/// Build the engine/context once for the *currently selected* model if missing.
+/// - No-ops if an engine already exists.
+/// - Does not change the selected model.
+/// - Runs on a blocking worker so the UI stays snappy.
+#[tauri::command]
+pub async fn preload_engine(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let app2 = app.clone();
+    let state2 = AppState {
+        memory: std::sync::Arc::clone(&state.memory),
+        current_stop: std::sync::Arc::clone(&state.current_stop),
+        engine: std::sync::Arc::clone(&state.engine),
+    };
+
+    tauri::async_runtime::spawn_blocking(move || ensure_engine_for_model(&app2, &state2, None))
+        .await
+        .map_err(|e| format!("join error: {e}"))??;
+
+    // Optional: signal ready (harmless if nobody listens)
+    let _ = app.emit(
+        "strata://engine-preloaded",
+        crate::model::get_current_model(),
+    );
+
+    Ok(())
+}
+
+// ---------------------------
+// Crate-visible shims
+// ---------------------------
+
+/// Re-export a crate-visible shim so other modules (e.g., model) can trigger a clean swap.
+/// Keeps service.rs private.
+pub(crate) fn reinit_engine_to_current_model(
+    app: &tauri::AppHandle,
+    state: &crate::app_state::AppState,
+) -> Result<(), String> {
+    service::reinit_engine_to_current_model(app, state)
 }

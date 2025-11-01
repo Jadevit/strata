@@ -1,34 +1,32 @@
-use once_cell::sync::Lazy;
 use std::{
     fs,
     path::{Component, Path, PathBuf},
-    sync::Mutex,
 };
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelEntry {
-    pub id: String,    // relative under models root with /
-    pub name: String,  // file stem
-    pub path: PathBuf, // absolute
+    pub id: String,
+    pub name: String,
+    pub path: PathBuf,
     pub backend_hint: String,
     pub file_type: String,
-    pub family: String, // parent dir
+    pub family: String,
 }
 
 pub const ALLOWED_MODEL_EXTS: &[&str] = &["gguf", "safetensors", "onnx", "bin"];
 
 #[inline]
-fn infer_backend_hint(ext: &str) -> &'static str {
+fn format_hint(ext: &str) -> &'static str {
     match ext {
-        "gguf" | "bin" => "llama",
-        "safetensors" => "transformers",
+        "gguf" => "gguf",
         "onnx" => "onnx",
+        "safetensors" => "safetensors",
+        "bin" => "bin",
         _ => "unknown",
     }
 }
 
-/// User models root, created if missing.
 pub fn user_models_root(app: &AppHandle) -> Result<PathBuf, String> {
     let mut root = app
         .path()
@@ -39,16 +37,6 @@ pub fn user_models_root(app: &AppHandle) -> Result<PathBuf, String> {
         fs::create_dir_all(&root).map_err(|e| format!("mkdir {}: {e}", root.display()))?;
     }
     Ok(root)
-}
-
-/// Dev fallback ./resources/models (if present)
-fn dev_models_root() -> Option<PathBuf> {
-    let p = std::env::current_dir()
-        .ok()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("resources")
-        .join("models");
-    p.exists().then_some(p)
 }
 
 pub fn resolve_models_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -80,7 +68,6 @@ impl ModelEntry {
             return None;
         }
 
-        let backend_hint = infer_backend_hint(&ext);
         let file_stem = abs_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -90,15 +77,15 @@ impl ModelEntry {
             .parent()
             .and_then(Path::file_name)
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         let id = rel_id(models_root, &abs_path).unwrap_or_else(|| file_stem.clone());
 
         Some(Self {
             id,
             name: file_stem,
             path: abs_path,
-            backend_hint: backend_hint.to_string(),
+            backend_hint: format_hint(&ext).to_string(),
             file_type: ext,
             family,
         })
@@ -115,17 +102,6 @@ pub fn list_available_models(app: AppHandle) -> Result<Vec<ModelEntry>, String> 
         &mut entries,
         &mut std::collections::HashSet::new(),
     )?;
-
-    if entries.is_empty() {
-        if let Some(dev_root) = dev_models_root() {
-            walk_dir(
-                &dev_root,
-                &dev_root,
-                &mut entries,
-                &mut std::collections::HashSet::new(),
-            )?;
-        }
-    }
 
     entries.sort_by(|a, b| {
         (a.family.to_lowercase(), a.name.to_lowercase())

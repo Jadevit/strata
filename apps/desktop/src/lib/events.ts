@@ -1,4 +1,5 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import type { HardwareProfile } from "../types";
 
 export type StreamDeltaEvent = { delta: string };
 export type StreamCompleteEvent = { text: string };
@@ -18,4 +19,11 @@ export function safeUnlisten(un: UnlistenFn | null | undefined) {
   } catch {
     /* no-op */
   }
+}
+
+export const HWPROFILE_EVENT = "strata://hwprofile";
+
+export function onHwProfile(cb: (p: HardwareProfile) => void) {
+  // returns a Promise<UnlistenFn>
+  return listen(HWPROFILE_EVENT, (e) => cb(e.payload as HardwareProfile));
 }

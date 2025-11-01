@@ -7,6 +7,7 @@ members = [
   # core crates
   "crates/strata-core",
   "crates/strata-abi",
+  "crates/strata-hwprof",
 
   # backends
   "crates/backends/llama/llama-sys",
@@ -28,5 +29,6 @@ once_cell = "1.21.3"
 # internal workspace crates
 strata-core = { path = "crates/strata-core" }
 strata-abi  = { path = "crates/strata-abi" }
+strata-hwprof = { path = "crates/strata-hwprof" }
 llama-sys   = { path = "crates/backends/llama/llama-sys" }
 llama-plugin = { path = "crates/backends/llama/llama-plugin" }

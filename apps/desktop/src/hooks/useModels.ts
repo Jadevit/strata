@@ -1,3 +1,13 @@
+// apps/desktop/src/hooks/useModels.ts
+//
+// Frontend model lifecycle:
+// - On mount: refresh list, resolve the active model (MRU/active/fallback), and set it.
+// - Immediately after selection, ask backend to *preload* the engine/context in the background.
+//   This makes the first prompt instant without blocking initial UI render.
+//
+// Note: we invoke "preload_engine" directly here to avoid coupling preload to the indexer.
+//       It no-ops if an engine already exists.
+
 import { useEffect, useState, useCallback, useMemo } from "react";
 import type { ModelEntry } from "../types";
 import {
@@ -7,6 +17,7 @@ import {
   importModel,
 } from "../lib/api";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 
 const RECENT_KEY = "strata.recentModels.v1";
 const MAX_RECENT = 5;
@@ -56,8 +67,11 @@ export function useModels() {
   }, []);
 
   const select = useCallback(async (m: ModelEntry) => {
+    // Frontend state first for immediate UI feedback
     setSelectedModel(m);
     recordRecent(m.id);
+
+    // Persist the selection in backend (does not build the engine by itself)
     try {
       await setActiveModelCmd(m.id);
     } catch (e) {
@@ -133,8 +147,20 @@ export function useModels() {
     }
   }, [refresh, select, models]);
 
+  // Initial load: pick active model, then ask backend to preload the engine/context in the background.
   useEffect(() => {
-    void refresh();
+    void (async () => {
+      await refresh(); // decides/sets active model (no context build yet)
+
+      // Build engine/context once (no-op if already built).
+      try {
+        await invoke("preload_engine");
+        // Optional: you can listen for "strata://engine-preloaded" if you want to flip a UI flag.
+        // Keeping it silent keeps first paint fast.
+      } catch (e) {
+        console.warn("[Strata] preload_engine skipped:", e);
+      }
+    })();
   }, [refresh]);
 
   return {

@@ -1,5 +1,10 @@
 import Chat from "./pages/Chat";
+import { HwProfileProvider } from "./context/HwProfileContext";
 
 export default function App() {
-  return <Chat />;
+  return (
+    <HwProfileProvider>
+      <Chat />
+    </HwProfileProvider>
+  );
 }

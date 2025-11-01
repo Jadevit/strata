@@ -68,7 +68,7 @@ pub type DetokenizeUtf8Fn = unsafe extern "C" fn(
 
 pub type LastErrorFn = unsafe extern "C" fn() -> StrataString;
 
-// NEW: small helpers the host/engine already uses conceptually
+// small helpers the host/engine already uses conceptually
 pub type ClearKvFn = unsafe extern "C" fn(session: *mut c_void);
 pub type KvLenHintFn = unsafe extern "C" fn(session: *mut c_void) -> i32; // -1 if unknown
 pub type ContextWindowHintFn = unsafe extern "C" fn(session: *mut c_void) -> i32; // 0 if unknown
@@ -102,7 +102,7 @@ pub struct LlmApi {
     pub last_error: LastErrorFn,
     pub free_string: FreeStringFn,
 
-    // NEW: KV/context hooks (required now that ABI version bumped)
+    // KV context hooks
     pub clear_kv_cache: ClearKvFn,
     pub kv_len_hint: KvLenHintFn,
     pub context_window_hint: ContextWindowHintFn,

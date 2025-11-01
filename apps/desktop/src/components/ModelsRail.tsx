@@ -80,7 +80,7 @@ export default function ModelsRail({
               )}
               <div className="flex flex-col gap-1">
                 {items.map((m) => {
-                  const supported = key === "llama";
+                  const supported = key === "gguf";
                   const isActive = m.id === selectedModelId;
                   const base = "group relative flex items-center gap-2 rounded-lg px-2 py-2 text-sm";
                   const style = !supported
