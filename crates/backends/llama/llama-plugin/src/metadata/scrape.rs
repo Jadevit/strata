@@ -108,10 +108,19 @@ pub fn scrape_metadata(path: &Path) -> Result<LlamaScrape, String> {
 
 // -------- helpers (pure safe) --------
 
+fn parse_u32_loose(s: &str) -> Option<u32> {
+    let t = s.trim().trim_matches('"').trim();
+    t.parse::<u32>().ok()
+}
+fn parse_i32_loose(s: &str) -> Option<i32> {
+    let t = s.trim().trim_matches('"').trim();
+    t.parse::<i32>().ok()
+}
+
 fn pick_u32(map: &HashMap<String, String>, keys: &[&str]) -> Option<u32> {
     for k in keys {
         if let Some(v) = map.get(*k) {
-            if let Ok(n) = v.trim().parse::<u32>() {
+            if let Some(n) = parse_u32_loose(v) {
                 return Some(n);
             }
         }
@@ -122,7 +131,7 @@ fn pick_u32(map: &HashMap<String, String>, keys: &[&str]) -> Option<u32> {
 fn pick_i32(map: &HashMap<String, String>, keys: &[&str]) -> Option<i32> {
     for k in keys {
         if let Some(v) = map.get(*k) {
-            if let Ok(n) = v.trim().parse::<i32>() {
+            if let Some(n) = parse_i32_loose(v) {
                 return Some(n);
             }
         }

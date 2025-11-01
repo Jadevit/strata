@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use strata_abi::metadata::ModelCoreInfo;
 
 /// Matches the UI’s `ModelMeta` (snake_case -> JSON).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetaOut {
     pub name: Option<String>,
     pub family: Option<String>,

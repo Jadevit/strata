@@ -1,25 +1,37 @@
 //! Metadata module: Tauri commands live here; helpers live in submodules.
 
 mod indexer;
-mod provider;
+mod provider; // retained for now; no longer used by get_model_metadata
 
 use tauri::{AppHandle, State};
 
-use strata_core::metadata::{ModelMetaOut, to_ui_meta};
+use strata_core::metadata::{ModelMetaOut, collect_model_metadata, to_ui_meta};
 
-pub use indexer::{MetaIndexStatus, MetaIndexer};
-use provider::collect_model_metadata_via_plugin;
+pub use indexer::{MetaIndexStatus, MetaIndexer, cached_read_meta_path, cached_write_meta_path};
 
 // ---- Tauri commands ----
 
 #[tauri::command]
 pub async fn get_model_metadata(app: AppHandle) -> Result<ModelMetaOut, String> {
     let path = crate::model::get_model_path(&app)?;
+
+    // Fast path: disk cache
+    if let Some(cached) = cached_read_meta_path(&path) {
+        return Ok(cached);
+    }
+
+    // Clone before moving into the blocking worker to avoid use-after-move
+    let path_for_worker = path.clone();
+
+    // Slow path: collect from core registry, then cache
     let info =
-        tauri::async_runtime::spawn_blocking(move || collect_model_metadata_via_plugin(&path))
+        tauri::async_runtime::spawn_blocking(move || collect_model_metadata(&path_for_worker))
             .await
             .map_err(|e| format!("join error: {e}"))??;
-    Ok(to_ui_meta(&info))
+
+    let ui = to_ui_meta(&info);
+    let _ = cached_write_meta_path(&path, &ui);
+    Ok(ui)
 }
 
 #[tauri::command]

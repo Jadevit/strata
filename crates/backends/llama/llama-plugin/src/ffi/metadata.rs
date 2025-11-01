@@ -42,8 +42,9 @@ pub unsafe fn read_all_meta(model: NonNull<llama_model>) -> HashMap<String, Stri
     let n = llama_model_meta_count(model.as_ptr());
     let mut out = HashMap::with_capacity(n as usize);
 
-    let mut key_buf = vec![0i8; 512];
-    let mut val_buf = vec![0i8; 4096];
+    // Larger scratch buffers; annotate truncation to aid debugging if needed.
+    let mut key_buf = vec![0i8; 1024];
+    let mut val_buf = vec![0i8; 8192];
 
     for i in 0..n {
         let kn =
@@ -51,6 +52,7 @@ pub unsafe fn read_all_meta(model: NonNull<llama_model>) -> HashMap<String, Stri
         if kn <= 0 {
             continue;
         }
+        let truncated_key = (kn as usize) >= key_buf.len().saturating_sub(1);
         let key = cstr_from_buf(&key_buf);
 
         let vn = llama_model_meta_val_str_by_index(
@@ -62,7 +64,12 @@ pub unsafe fn read_all_meta(model: NonNull<llama_model>) -> HashMap<String, Stri
         if vn <= 0 {
             continue;
         }
-        let val = cstr_from_buf(&val_buf);
+        let truncated_val = (vn as usize) >= val_buf.len().saturating_sub(1);
+        let mut val = cstr_from_buf(&val_buf);
+
+        if truncated_key || truncated_val {
+            val.push_str(" [__truncated__]");
+        }
 
         out.insert(key, val);
     }

@@ -12,8 +12,18 @@ impl BackendMetadataProvider for LlamaMetadataProvider {
 
     fn collect(&self, file: &Path) -> Result<ModelCoreInfo, String> {
         let s = scrape_metadata(file)?;
-        let fam_lc = s.family.as_deref().map(|f| f.to_ascii_lowercase());
-        let prefer_native_template = s.chat_template.is_some();
+
+        // HARD REQUIREMENT: model must provide a native chat_template.
+        if s.chat_template
+            .as_deref()
+            .map(str::is_empty)
+            .unwrap_or(true)
+        {
+            return Err(format!(
+                "model '{}' is missing a native chat template, please refer to the model card!",
+                file.display()
+            ));
+        }
 
         Ok(ModelCoreInfo {
             name: s.name,
@@ -26,15 +36,8 @@ impl BackendMetadataProvider for LlamaMetadataProvider {
             eos_token_id: s.eos_token_id,
             bos_token_id: s.bos_token_id,
             quantization: s.quantization,
-            chat_template: s.chat_template,
-            prompt_flavor_hint: if prefer_native_template {
-                None
-            } else {
-                match fam_lc.as_deref() {
-                    Some(f) if f.contains("phi") => Some("phi3".to_string()),
-                    _ => Some("chatml".to_string()),
-                }
-            },
+            chat_template: s.chat_template, // present & non-empty by here
+            prompt_flavor_hint: None,       // absolutely no fallback
             raw: s.raw,
         })
     }
