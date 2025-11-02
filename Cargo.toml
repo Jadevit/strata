@@ -8,6 +8,7 @@ members = [
   "crates/strata-core",
   "crates/strata-abi",
   "crates/strata-hwprof",
+  "crates/strata-plugins",
 
   # backends
   "crates/backends/llama/llama-sys",

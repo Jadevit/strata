@@ -2787,7 +2787,21 @@ checksum = "7cd21b9f5a1cce3c3515c9ffa85f5c7443e07162dae0ccf4339bb7ca38ad3454"
 dependencies = [
  "bitflags 1.3.2",
  "libloading 0.7.4",
- "nvml-wrapper-sys",
+ "nvml-wrapper-sys 0.7.0",
+ "static_assertions",
+ "thiserror 1.0.69",
+ "wrapcenum-derive",
+]
+
+[[package]]
+name = "nvml-wrapper"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9bff0aa1d48904a1385ea2a8b97576fbdcbc9a3cfccd0d31fe978e1c4038c5"
+dependencies = [
+ "bitflags 2.9.4",
+ "libloading 0.8.9",
+ "nvml-wrapper-sys 0.8.0",
  "static_assertions",
  "thiserror 1.0.69",
  "wrapcenum-derive",
@@ -2800,6 +2814,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c961a2ea9e91c59a69b78e69090f6f5b867bb46c0c56de9482da232437c4987e"
 dependencies = [
  "libloading 0.7.4",
+]
+
+[[package]]
+name = "nvml-wrapper-sys"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "698d45156f28781a4e79652b6ebe2eaa0589057d588d3aec1333f6466f13fcb5"
+dependencies = [
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -3994,7 +4017,7 @@ dependencies = [
  "dirs 5.0.1",
  "hex",
  "metal",
- "nvml-wrapper",
+ "nvml-wrapper 0.9.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -4596,6 +4619,25 @@ dependencies = [
  "sha2",
  "sysinfo",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "strata-plugins"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ash 0.38.0+1.3.281",
+ "dirs 5.0.1",
+ "hex",
+ "metal",
+ "nvml-wrapper 0.10.0",
+ "once_cell",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "zip",
 ]
 
 [[package]]
