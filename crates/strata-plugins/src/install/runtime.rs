@@ -143,25 +143,30 @@ fn has_cuda_device() -> bool {
 fn has_amd_vulkan_device() -> bool {
     use std::ffi::CString;
 
+    // ✅ Use Entry::load(), not Entry::linked()
     let entry = match unsafe { ash::Entry::load() } {
         Ok(e) => e,
-        Err(_) => return false,
+        Err(e) => {
+            eprintln!("[detect] Vulkan loader not available: {e:?}");
+            return false;
+        }
     };
 
-    let app = CString::new("strata-plugins").unwrap();
-    let eng = CString::new("strata").unwrap();
+    let app_name = CString::new("strata-plugins").unwrap();
+    let engine_name = CString::new("strata").unwrap();
 
     let app_info = vk::ApplicationInfo {
         s_type: vk::StructureType::APPLICATION_INFO,
         p_next: std::ptr::null(),
-        p_application_name: app.as_ptr(),
+        p_application_name: app_name.as_ptr(),
         application_version: 0,
-        p_engine_name: eng.as_ptr(),
+        p_engine_name: engine_name.as_ptr(),
         engine_version: 0,
         api_version: vk::API_VERSION_1_0,
         ..Default::default()
     };
-    let ci = vk::InstanceCreateInfo {
+
+    let create_info = vk::InstanceCreateInfo {
         s_type: vk::StructureType::INSTANCE_CREATE_INFO,
         p_next: std::ptr::null(),
         flags: vk::InstanceCreateFlags::empty(),
@@ -173,23 +178,27 @@ fn has_amd_vulkan_device() -> bool {
         ..Default::default()
     };
 
-    let instance = match unsafe { entry.create_instance(&ci, None) } {
+    let instance = match unsafe { entry.create_instance(&create_info, None) } {
         Ok(i) => i,
-        Err(_) => return false,
+        Err(e) => {
+            eprintln!("[detect] vkCreateInstance failed: {e:?}");
+            return false;
+        }
     };
 
-    let mut found = false;
-    if let Ok(devs) = unsafe { instance.enumerate_physical_devices() } {
-        for pd in devs {
+    let mut found_amd = false;
+    if let Ok(devices) = unsafe { instance.enumerate_physical_devices() } {
+        for pd in devices {
             let props = unsafe { instance.get_physical_device_properties(pd) };
             if props.vendor_id == 0x1002 {
-                found = true;
+                found_amd = true;
                 break;
             }
         }
     }
+
     unsafe { instance.destroy_instance(None) };
-    found
+    found_amd
 }
 
 #[cfg(target_os = "macos")]

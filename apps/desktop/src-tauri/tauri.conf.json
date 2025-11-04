@@ -5,7 +5,7 @@
   "identifier": "com.strata.app",
 
   "build": {
-    "beforeDevCommand": "pnpm -C apps/desktop dev",
+    "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"

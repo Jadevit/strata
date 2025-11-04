@@ -7,19 +7,26 @@ mod metadata;
 mod model;
 mod plugin;
 mod runtime;
+// NEW: store integration (single file)
+mod store;
 
 use app_state::AppState;
 use metadata::MetaIndexer;
 use tauri::Emitter; // for app.emit
 
-// ✅ add hwprof (minimal)
+// ✅ hwprof (unchanged)
 use strata_hwprof::{hwprof_profile_path, validate_or_redetect};
+
+// ✅ bring in plugins state from the crate (managed by Tauri)
+use strata_plugins::state::PluginsState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
         .manage(MetaIndexer::new())
+        // NEW: manage the plugins state for the store
+        .manage(PluginsState::new())
         // plugins
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -42,7 +49,6 @@ pub fn run() {
                             profile.backends.metal
                         );
                         eprintln!("[hwprof] cache: {}", hwprof_profile_path().display());
-                        // keep your existing frontend listener happy
                         let _ = app_handle.emit("strata://hwprofile", &profile);
                     }
                     Err(e) => eprintln!("[hwprof] detection failed: {e:?}"),
@@ -76,6 +82,13 @@ pub fn run() {
             // installer
             runtime::is_llama_runtime_installed,
             runtime::run_runtime_installer,
+            // ===== Store (plugins/runtime) =====
+            store::store_refresh_manifest,
+            store::store_list_entries,
+            store::store_plan_install,
+            store::store_install_runtime,
+            store::store_install_plugin,
+            store::store_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("Failed to launch Tauri app");

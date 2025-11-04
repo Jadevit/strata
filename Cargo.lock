@@ -4577,6 +4577,7 @@ dependencies = [
  "strata-abi",
  "strata-core",
  "strata-hwprof",
+ "strata-plugins",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
