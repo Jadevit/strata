@@ -1,8 +1,11 @@
-name: Build Runtime Packs (llama monolith)
+name: Build Llama Runtime Packs (monolith)
 
 on:
   workflow_call:
   workflow_dispatch:
+
+env:
+  LLAMA_CPP_REF: 11f0af5504252e453d57406a935480c909e3ff37
 
 jobs:
   build:
@@ -16,24 +19,21 @@ jobs:
             triplet: x64
             variant: cpu
             outplugin: StrataLlama.dll
-
           - os: windows-latest
             triplet: x64
             variant: vulkan
             outplugin: StrataLlama.dll
-
           - os: windows-latest
             triplet: x64
             variant: cuda
             outplugin: StrataLlama.dll
             cuda_version: "12.9.0"
 
-          # ---------- macOS (arm64: CPU + METAL) ----------
+          # ---------- macOS (arm64) ----------
           - os: macos-14
             triplet: arm64
             variant: cpu
             outplugin: libStrataLlama.dylib
-
           - os: macos-14
             triplet: arm64
             variant: metal
@@ -44,12 +44,10 @@ jobs:
             triplet: x64
             variant: cpu
             outplugin: libStrataLlama.so
-
           - os: ubuntu-22.04
             triplet: x64
             variant: vulkan
             outplugin: libStrataLlama.so
-
           - os: ubuntu-22.04
             triplet: x64
             variant: cuda
@@ -57,33 +55,32 @@ jobs:
             cuda_version: "12.9.0"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Fetch llama.cpp (pinned commit)
+      - name: Fetch pinned llama.cpp
         working-directory: crates/backends/llama/llama-sys
+        shell: bash
         run: |
           set -eux
           if [ ! -d "llama.cpp" ]; then
-            echo "Fetching llama.cpp source..."
             git clone https://github.com/ggerganov/llama.cpp.git llama.cpp
-            cd llama.cpp
-            git checkout 11f0af5504252e453d57406a935480c909e3ff37
-          else
-            echo "✅ llama.cpp already exists"
           fi
+          cd llama.cpp
+          git fetch --depth=1 origin $LLAMA_CPP_REF
+          git checkout $LLAMA_CPP_REF
 
-      - name: Set up Ninja
+      - name: Setup Ninja
         uses: seanmiddleditch/gha-setup-ninja@v4
 
-      - name: Install Rust
+      - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
 
-      - name: Cache Rust build
+      - name: Cache Rust builds
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -92,18 +89,18 @@ jobs:
             crates/backends/llama/llama-rs
             crates/backends/llama/llama-plugin
 
-      # ---------- OS dependencies ----------
-      - name: Windows · MSVC env
+      # ---------- OS deps ----------
+      - name: Windows • MSVC env
         if: ${{ startsWith(matrix.os, 'windows') }}
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Windows · Vulkan SDK (vulkan only)
+      - name: Windows • Vulkan SDK (vulkan only)
         if: ${{ startsWith(matrix.os, 'windows') && matrix.variant == 'vulkan' }}
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
           version: "1.3.290.0"
 
-      - name: Windows · CUDA Toolkit (cuda only)
+      - name: Windows • CUDA Toolkit (cuda only)
         if: ${{ startsWith(matrix.os, 'windows') && matrix.variant == 'cuda' }}
         uses: Jimver/cuda-toolkit@v0.2.24
         with:
@@ -111,88 +108,136 @@ jobs:
           method: network
           use-github-cache: false
 
-      - name: Ubuntu · deps
+      - name: Ubuntu • deps
         if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        shell: bash
         run: |
+          set -eux
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config zip
 
-      - name: Ubuntu · Vulkan SDK (vulkan only)
+      - name: Ubuntu • Vulkan SDK (vulkan only)
         if: ${{ matrix.os == 'ubuntu-22.04' && matrix.variant == 'vulkan' }}
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
           version: "1.3.290.0"
 
-      - name: Ubuntu · CUDA Toolkit (cuda only)
+      - name: Ubuntu • CUDA Toolkit (cuda only)
         if: ${{ matrix.os == 'ubuntu-22.04' && matrix.variant == 'cuda' }}
         uses: Jimver/cuda-toolkit@v0.2.27
         with:
           cuda: ${{ matrix.cuda_version }}
           method: network
 
-      # ---------- Build monolithic plugin ----------
-      - name: Compute Cargo features
+      # ---------- Build ----------
+      - name: Compute cargo features
+        id: feats
         shell: bash
         run: |
           case "${{ matrix.variant }}" in
-            cpu)    echo "FEATS=" >> $GITHUB_ENV ;;
-            cuda)   echo "FEATS=cuda" >> $GITHUB_ENV ;;
-            vulkan) echo "FEATS=vulkan" >> $GITHUB_ENV ;;
-            metal)  echo "FEATS=metal" >> $GITHUB_ENV ;;
+            cpu)    echo "features=" >> $GITHUB_OUTPUT ;;
+            cuda)   echo "features=cuda" >> $GITHUB_OUTPUT ;;
+            vulkan) echo "features=vulkan" >> $GITHUB_OUTPUT ;;
+            metal)  echo "features=metal" >> $GITHUB_OUTPUT ;;
             *)      echo "Unknown variant"; exit 1 ;;
           esac
-          echo "Using features: ${FEATS:-<none>}"
 
-      - name: Build monolith (release)
+      - name: Build llama monolith (release)
         shell: bash
         run: |
           set -eux
-          if [ -z "${FEATS:-}" ]; then
-            cargo build -p llama-plugin --release
+          FEATS="${{ steps.feats.outputs.features }}"
+          if [ -n "$FEATS" ]; then
+            cargo build -p llama-plugin --release --features "$FEATS"
           else
-            cargo build -p llama-plugin --release --features "${FEATS}"
+            cargo build -p llama-plugin --release
           fi
 
-      # ---------- Stage runtime pack ----------
-      - name: Stage pack
+      # ---------- Stage pack ----------
+      - name: Stage runtime pack
         id: stage
         shell: bash
         run: |
-          set -euo pipefail
+          set -eux
           STAGE="runtime_pack"
           mkdir -p "$STAGE/llama_backend" "$STAGE/licenses"
-          cp "target/release/${{ matrix.outplugin }}" "$STAGE/llama_backend/"
+
+          # determine variant suffix for the installed plugin name
+          if [ "${{ matrix.variant }}" = "cpu" ]; then
+            SUFFIX=""
+          else
+            SUFFIX="_${{ matrix.variant }}"
+          fi
+
+          # compute renamed plugin filename by OS
+          case "${{ matrix.os }}" in
+            windows-*) RENAMED="StrataLlama${SUFFIX}.dll" ;;
+            macos-*)   RENAMED="libStrataLlama${SUFFIX}.dylib" ;;
+            ubuntu-*)  RENAMED="libStrataLlama${SUFFIX}.so" ;;
+            *) echo "Unknown OS"; exit 1 ;;
+          esac
+
+          # copy/rename built plugin into the pack
+          cp "target/release/${{ matrix.outplugin }}" "$STAGE/llama_backend/$RENAMED"
+
+          # license(s)
           cp "crates/backends/llama/llama-sys/llama.cpp/LICENSE" "$STAGE/licenses/llama.cpp.LICENSE"
 
-          cat > "$STAGE/runtime.json" <<EOF
+          # small pack manifest (not the big manifest.json registry)
+          cat > "$STAGE/pack.json" <<EOF
           {
             "backend": "llama",
             "variant": "${{ matrix.variant }}",
             "os": "${{ matrix.os }}",
             "arch": "${{ matrix.triplet }}",
-            "workflow_sha": "${{ github.sha }}",
-            "monolith": true
+            "plugin_file": "$RENAMED",
+            "monolith": true,
+            "llama_cpp_ref": "${{ env.LLAMA_CPP_REF }}",
+            "workflow_sha": "${{ github.sha }}"
           }
           EOF
 
           NAME="strata-llama-${{ matrix.triplet }}-${{ matrix.variant }}-${{ matrix.os }}.zip"
           (cd "$STAGE" && zip -r "../$NAME" . >/dev/null)
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+          echo "pack_name=$NAME" >> $GITHUB_OUTPUT
+          echo "plugin_file=$RENAMED" >> $GITHUB_OUTPUT
 
       - name: SHA256 checksum
+        id: sha
         shell: bash
         run: |
-          FILE="${{ steps.stage.outputs.name }}"
+          FILE="${{ steps.stage.outputs.pack_name }}"
           if command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 "$FILE" > "$FILE.sha256"
+            SHASUM=$(shasum -a 256 "$FILE" | awk '{print $1}')
           else
-            sha256sum "$FILE" > "$FILE.sha256"
+            SHASUM=$(sha256sum "$FILE" | awk '{print $1}')
           fi
+          echo "$SHASUM  $FILE" > "$FILE.sha256"
+          echo "sha256=$SHASUM" >> $GITHUB_OUTPUT
 
-      - name: Upload runtime pack
+      # Handy: emit a single-entry JSON you can aggregate later into the public manifest
+      - name: Emit manifest-entry.json
+        shell: bash
+        run: |
+          cat > "manifest-entry.json" <<EOF
+          {
+            "name": "${{ steps.stage.outputs.pack_name }}",
+            "sha256": "${{ steps.sha.outputs.sha256 }}",
+            "os": "${{ matrix.os }}",
+            "arch": "${{ matrix.triplet }}",
+            "variant": "${{ matrix.variant }}",
+            "url": "TBD" ,
+            "plugin_file": "${{ steps.stage.outputs.plugin_file }}"
+          }
+          EOF
+          cat manifest-entry.json
+
+      - name: Upload runtime pack + checksum + manifest entry
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.stage.outputs.name }}
+          name: ${{ steps.stage.outputs.pack_name }}
           path: |
-            ${{ steps.stage.outputs.name }}
-            ${{ steps.stage.outputs.name }}.sha256
+            ${{ steps.stage.outputs.pack_name }}
+            ${{ steps.stage.outputs.pack_name }}.sha256
+            manifest-entry.json

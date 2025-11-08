@@ -143,7 +143,7 @@ fn has_cuda_device() -> bool {
 fn has_amd_vulkan_device() -> bool {
     use std::ffi::CString;
 
-    // ✅ Use Entry::load(), not Entry::linked()
+    // ✅ Use Entry::load(); this is the ash 0.38 path to the loader
     let entry = match unsafe { ash::Entry::load() } {
         Ok(e) => e,
         Err(e) => {
@@ -226,18 +226,76 @@ pub fn install_variants(entries: &[&ManifestEntry], install_root: &Path) -> Resu
     Ok(installed)
 }
 
+#[cfg(target_os = "windows")]
+const CPU_BASENAME: &str = "StrataLlama.dll";
+#[cfg(target_os = "linux")]
+const CPU_BASENAME: &str = "libStrataLlama.so";
+#[cfg(target_os = "macos")]
+const CPU_BASENAME: &str = "libStrataLlama.dylib";
+
+#[cfg(target_os = "windows")]
+fn basename_for_variant(v: &str) -> &'static str {
+    match v {
+        "cuda" => "StrataLlama_cuda.dll",
+        "vulkan" => "StrataLlama_vulkan.dll",
+        "metal" => "StrataLlama_metal.dll",
+        _ => CPU_BASENAME, // "cpu"
+    }
+}
+#[cfg(target_os = "linux")]
+fn basename_for_variant(v: &str) -> &'static str {
+    match v {
+        "cuda" => "libStrataLlama_cuda.so",
+        "vulkan" => "libStrataLlama_vulkan.so",
+        "metal" => "libStrataLlama_metal.so",
+        _ => CPU_BASENAME, // "cpu"
+    }
+}
+#[cfg(target_os = "macos")]
+fn basename_for_variant(v: &str) -> &'static str {
+    match v {
+        "metal" => "libStrataLlama_metal.dylib",
+        "cuda" => "libStrataLlama_cuda.dylib",
+        "vulkan" => "libStrataLlama_vulkan.dylib",
+        _ => CPU_BASENAME, // "cpu"
+    }
+}
+
 /// Write Strata’s runtime.json describing which variant is active.
+/// Emits:
+/// - top-level `active_variant` (e.g., "cpu" | "cuda" | "vulkan" | "metal")
+/// - top-level `current_lib_dir` (absolute dir holding the active plugin)
+/// - top-level `variants` map: { variant: { "dir": "...", "file": "..." } }
+/// Also keeps the legacy `llama { ... }` block for backwards compatibility.
 pub fn write_runtime_config(
     root: &Path,
     installed: &[String],
     active_gpu: Option<&str>,
 ) -> Result<()> {
-    let current_lib_dir = match active_gpu {
-        Some(v) => root.join(v).join("llama_backend"),
-        None => root.join("cpu").join("llama_backend"),
-    };
+    let active_variant = active_gpu.unwrap_or("cpu");
+    let current_lib_dir = root.join(active_variant).join("llama_backend");
+
+    // Build `variants` map
+    let mut vmap = serde_json::Map::new();
+    for variant in installed {
+        let dir = root.join(variant).join("llama_backend");
+        let file = basename_for_variant(variant);
+        vmap.insert(
+            variant.clone(),
+            serde_json::json!({
+                "dir": dir.to_string_lossy(),
+                "file": file
+            }),
+        );
+    }
 
     let json = serde_json::json!({
+        "active_variant": active_variant,
+        "current_lib_dir": current_lib_dir.to_string_lossy(),
+        "variants": vmap,
+        "monolith": true,
+
+        // legacy/compat view used elsewhere in the app
         "llama": {
             "active": if active_gpu.is_some() { "gpu" } else { "cpu" },
             "gpu_backend": active_gpu,

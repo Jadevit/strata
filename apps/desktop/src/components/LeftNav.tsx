@@ -10,29 +10,13 @@ type Item = {
 };
 
 export default function LeftNav({
-  open,
   active = "chat",
-  onNewChat,
   onOpenModels,
-  onRequestOpen,
 }: {
-  open: boolean;
   active?: string;
-  onNewChat: () => void;
   onOpenModels: () => void;
-  onRequestOpen: () => void;
 }) {
-  const click = (fn?: () => void) => () => {
-    if (!open) {
-      onRequestOpen();
-      requestAnimationFrame(() => fn && fn());
-    } else {
-      fn && fn();
-    }
-  };
-
   const ITEMS: Item[] = [
-    { key: "new", label: "New Chat", icon: <Icons.New className="text-emerald-300 drop-shadow-[0_0_6px_rgba(16,185,129,0.35)]" />, onClick: onNewChat },
     { key: "chat", label: "Chat", icon: <Icons.Chat className="text-sky-300 drop-shadow-[0_0_6px_rgba(125,211,252,0.35)]" /> },
     { key: "models", label: "Models", icon: <Icons.Models className="text-violet-300 drop-shadow-[0_0_6px_rgba(167,139,250,0.35)]" />, onClick: onOpenModels },
     { key: "train", label: "Train", icon: <Icons.Train className="text-amber-300 drop-shadow-[0_0_6px_rgba(251,191,36,0.35)]" />, disabled: true },
@@ -44,65 +28,79 @@ export default function LeftNav({
   return (
     <aside
       className={[
-        "shrink-0 border-r border-white/10 bg-[#0B0F1A]/95 backdrop-blur-sm",
-        "transition-[width] duration-200 ease-out",
-        open ? "w-56" : "w-14",
+        "w-14 shrink-0 border-r border-white/10 bg-[#0B0F1A]/95 backdrop-blur-sm",
       ].join(" ")}
+      aria-label="Primary"
     >
-      {/* New Chat */}
-      <div className="px-2 pt-3">
-        <button
-          onClick={click(onNewChat)}
+      <nav className="mt-2 flex h-full flex-col gap-1 px-1.5 pb-3">
+        {ITEMS.map((it) => {
+  const isActive = it.key === active;
+
+  const base =
+    "relative grid place-items-center rounded-lg p-2 text-sm transition-all focus:outline-none focus:ring-4 focus:ring-white/10";
+  const enabled = isActive
+    ? "text-slate-100 bg-white/10"
+    : "text-slate-300 hover:bg-white/10 hover:shadow-md hover:shadow-white/10 hover:scale-[1.02]";
+  const disabled = "text-slate-400 opacity-60 cursor-not-allowed";
+
+  return (
+    <div key={it.key} className="relative">
+      {/* make the BUTTON the peer */}
+      <button
+        className={`${base} ${it.disabled ? disabled : enabled} w-full text-left peer`}
+        aria-disabled={it.disabled || undefined}
+        aria-current={isActive ? "page" : undefined}
+        onClick={it.disabled ? undefined : it.onClick}
+        aria-label={it.label}
+        title={undefined}
+      >
+        <span className="text-[16px]" aria-hidden>
+          {it.icon}
+        </span>
+        {isActive && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full bg-sky-300/80"
+          />
+        )}
+      </button>
+
+      {/* sibling extrusion listens to the peer's hover/focus */}
+      <div
+        className={[
+          "pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2",
+          "transition-[width,opacity] duration-150 ease-out",
+          "w-0 opacity-0",
+          "peer-hover:w-44 peer-hover:opacity-100",
+          "peer-focus-visible:w-44 peer-focus-visible:opacity-100",
+          "peer-focus:w-44 peer-focus:opacity-100",
+        ].join(" ")}
+      >
+        <div
           className={[
-            "mx-auto flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs",
-            "text-slate-200 hover:bg-white/10 hover:shadow-md hover:shadow-white/10 hover:scale-[1.03]",
-            "active:scale-[0.99] transition-all",
-            open ? "w-28" : "w-9",
+            "flex h-9 items-center overflow-hidden rounded-r-xl border border-white/10 border-l-0 px-3",
+"backdrop-blur-[8px]",
+"bg-[linear-gradient(to_right,rgba(20,25,38,0.75),rgba(20,25,38,0.45),rgba(255,255,255,0.08))]",
+"text-sm font-medium text-slate-100",
+"shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]",
+            isActive ? "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" : "",
           ].join(" ")}
-          title="New chat"
         >
-          <span className="text-[14px]" aria-hidden>
-            <Icons.New className="h-[14px] w-[14px] text-emerald-300 drop-shadow-[0_0_6px_rgba(16,185,129,0.35)]" />
+          <span className="whitespace-nowrap">
+            {it.disabled ? (
+              <>
+                {it.label}{" "}
+                <span className="align-super text-[10px] opacity-70">Soon™</span>
+              </>
+            ) : (
+              it.label
+            )}
           </span>
-          {open && <span>New Chat</span>}
-        </button>
+        </div>
       </div>
-
-      <nav className="mt-2 flex h-[calc(100%-52px)] flex-col gap-1 px-1.5 pb-3">
-        {ITEMS.filter((i) => i.key !== "new").map((it) => {
-          const isActive = it.key === active;
-          const base = "group relative flex items-center gap-2 rounded-lg px-2 py-2 text-sm transition-all";
-          const enabled = isActive
-            ? "text-slate-100 bg-white/8"
-            : "text-slate-300 hover:bg-white/10 hover:shadow-md hover:shadow-white/10 hover:scale-[1.02]";
-          const disabled = "text-slate-400 opacity-60 cursor-not-allowed"; // no hover effects
-
-          return (
-            <div key={it.key} className="relative">
-              <button
-                className={`${base} ${it.disabled ? disabled : enabled} w-full text-left`}
-                aria-disabled={it.disabled || undefined}
-                onClick={it.disabled ? undefined : click(it.onClick)}
-                title={it.disabled ? "Soon™" : it.label}
-              >
-                <span className="text-[16px]">{it.icon}</span>
-                {open && <span className="truncate">{it.label}</span>}
-              </button>
-
-              {(!open || it.disabled) && (
-                <div className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-white/10 px-2 py-1 text-[11px] text-slate-200 opacity-0 shadow transition-opacity group-hover:opacity-100">
-                  {it.disabled ? (
-                    <>
-                      {it.label} <span className="align-super text-[10px]">Soon™</span>
-                    </>
-                  ) : (
-                    it.label
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+    </div>
+  );
+})}
       </nav>
     </aside>
   );

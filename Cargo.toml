@@ -2,7 +2,6 @@
 members = [
   # apps
   "apps/desktop/src-tauri",
-  "apps/desktop/src-tauri/sidecar/runtime-installer",
 
   # core crates
   "crates/strata-core",

@@ -80,9 +80,7 @@ pub fn run() {
             // NEW: preload command (safe no-op if engine already exists)
             engine::preload_engine,
             // installer
-            runtime::is_llama_runtime_installed,
-            runtime::run_runtime_installer,
-            // ===== Store (plugins/runtime) =====
+            runtime::is_llama_runtime_installed,            // ===== Store (plugins/runtime) =====
             store::store_refresh_manifest,
             store::store_list_entries,
             store::store_plan_install,

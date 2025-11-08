@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Header from "../components/Header";
 import LeftNav from "../components/LeftNav";
-import ModelsRail from "../components/ModelsRail"; // <-- slide-in panel
+import ModelsRail from "../components/ModelsRail";
 import ChatTranscript from "../components/ChatTranscript";
 import Composer from "../components/Composer";
 import ModelInfoDrawer from "../components/ModelInfoDrawer";
@@ -11,10 +11,7 @@ import { useLLM } from "../hooks/useLLM";
 
 export default function Chat() {
   const [infoOpen, setInfoOpen] = useState(false);
-  const [navOpen, setNavOpen] = useState(true);
-
-  // slide-in models rail mode (replaces left nav content, but keeps rail expanded)
-  const [modelsMode, setModelsMode] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
 
   // models
   const { models, selectedModel, setSelectedModel, importFromDialog, recent } = useModels();
@@ -40,22 +37,16 @@ export default function Chat() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ensure rail is open before switching to models
+  // open models rail
   const openModelsRail = useCallback(() => {
-    if (!navOpen) {
-      setNavOpen(true);
-      // toggle mode on the next frame to avoid the “narrow panel” flash
-      requestAnimationFrame(() => setModelsMode(true));
-    } else {
-      setModelsMode(true);
-    }
-  }, [navOpen]);
+    setModelsOpen((v) => !v);
+  }, []);
 
-  // when a model is picked from the rail, return to normal nav (keep expanded)
+  // when a model is picked, close the rail
   const handlePickModel = useCallback(
     (m: typeof models[number]) => {
       setSelectedModel(m);
-      setModelsMode(false); // slide back to nav, do NOT collapse
+      setModelsOpen(false);
     },
     [setSelectedModel]
   );
@@ -67,12 +58,13 @@ export default function Chat() {
         e.preventDefault();
         setInfoOpen((v) => !v);
       }
-      if (e.ctrlKey && (e.key === "b" || e.key === "B")) {
+      if (e.ctrlKey && (e.key === "m" || e.key === "M")) {
         e.preventDefault();
-        setNavOpen((v) => !v);
+        setModelsOpen((v) => !v);
       }
       if (e.key === "Escape") {
         setInfoOpen(false);
+        setModelsOpen(false);
         if (isGenerating) stop();
       }
       // TEMP streaming toggle until settings UI
@@ -87,63 +79,51 @@ export default function Chat() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-[#0B0F1A] text-slate-100">
+      {/* Header */}
       <Header
         selectedModel={selectedModel}
-        models={models}
-        onSelectModel={(m) => setSelectedModel(m)}
-        onOpenInfo={() => setInfoOpen(true)}
-        onToggleNav={() => setNavOpen((v) => !v)}
-        onImportModel={importFromDialog}
         recent={recent}
+        onSelectModel={setSelectedModel}
+        onOpenInfo={() => setInfoOpen(true)}
+        onImportModel={importFromDialog}
       />
 
       <div className="flex flex-1 min-h-0">
-        {/* Left rail: either the normal nav OR the models panel, but never collapse on selection */}
-        {modelsMode ? (
-          <ModelsRail
-            open={navOpen}
-            selectedModelId={selectedModel?.id ?? null}
-            models={models}
-            onBack={() => setModelsMode(false)}
-            onPick={handlePickModel}
-            onImport={importFromDialog}
-          />
-        ) : (
-          <LeftNav
-            open={navOpen}
-            active="chat"
-            onNewChat={() => newChat()}
-            onOpenModels={openModelsRail}
-            // If the rail is collapsed and any nav item is clicked, expand first
-            onRequestOpen={() => setNavOpen(true)}
-          />
-        )}
+        {/* LeftNav (always visible) */}
+        <LeftNav active="chat" onOpenModels={openModelsRail} />
 
-        <div className="flex min-w-0 flex-1 min-h-0 flex-col">
+        {/* Chat area */}
+        <div className="flex min-w-0 flex-1 min-h-0 flex-col relative">
           <ChatTranscript messages={messages} endRef={chatEndRef} />
           <Composer
             value={input}
             disabled={isGenerating}
             isGenerating={isGenerating}
             onChange={(v) => setInput(v)}
-            onSend={() => {
-              void sendMessage();
-            }}
-            onCancel={() => {
-              void stop();
-            }}
+            onSend={() => void sendMessage()}
+            onCancel={() => void stop()}
           />
         </div>
-      </div>
 
-      <ModelInfoDrawer
-        open={infoOpen}
-        onClose={() => setInfoOpen(false)}
-        selectedModel={selectedModel}
-        meta={meta}
-        metaLoading={metaLoading}
-        metaError={metaError}
-      />
+        {/* Models Rail (slides out beside nav) */}
+        <ModelsRail
+          open={modelsOpen}
+          selectedModelId={selectedModel?.id ?? null}
+          models={models}
+          onPick={handlePickModel}
+          onImport={importFromDialog}
+        />
+
+        {/* Model Info Drawer */}
+        <ModelInfoDrawer
+          open={infoOpen}
+          onClose={() => setInfoOpen(false)}
+          selectedModel={selectedModel}
+          meta={meta}
+          metaLoading={!!metaLoading}
+          metaError={metaError}
+        />
+      </div>
     </div>
   );
 }
