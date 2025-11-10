@@ -2,35 +2,34 @@
 
 [![CI](https://github.com/jadevit/strata/actions/workflows/ci.yml/badge.svg)](https://github.com/jadevit/strata/actions)
 [![Release](https://img.shields.io/github/v/release/jadevit/strata)](https://github.com/jadevit/strata/releases)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![License: Commercial](https://img.shields.io/badge/license-Commercial-orange.svg)](LICENSE-COMMERCIAL)
+[![License: AGPLv3](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
 
-Strata is a local-first AI platform built with Rust, Tauri, and React.  
-It delivers fast inference, model management, and hardware-aware runtimes — without Electron bloat or external dependencies.
+**Strata** is a Rust-built, local-first AI platform focused on speed, modularity, and security.  
+It provides a unified foundation for local inference, backend integration, and plugin-driven extensibility—all without cloud dependencies or Electron bloat.
 
 ## Features
-- Custom Rust inference loop with a handwritten FFI wrapper for `llama.cpp`
-- GPU runtimes (CUDA, Vulkan, Metal) with automatic installer detection
-- Multiple backend architecture (currently supports `llama.cpp`, designed for ONNX, Transformers, and more)
-- Model manager with metadata scraping and dynamic prompt formatting
-- Built-in benchmarking system with reproducible `.sbx` files
-- Logging system for conversations and model runs
-- CI/CD pipeline for cross-platform runtime publishing
+- Native Rust backend with a custom FFI wrapper for `llama.cpp`
+- Modular plugin system for extending Strata with new tools, models, or backends
+- Cross-platform hardware profiler with smart runtime detection and caching
+- Dynamic model registry that automatically parses and displays metadata
+- Clean, responsive Tauri + React interface
+- Designed for extensibility: image generation, TTS/STT, vision models, and more planned
 
 ## Installation
-Download the latest release from [Releases](https://github.com/jadevit/strata/releases).  
-The installer detects your hardware and installs the correct runtime automatically.
+Download the latest release from the [Releases](https://github.com/jadevit/strata/releases) page.  
+Strata will detect your system hardware and configure the correct runtime on first launch.
 
 ## Roadmap
-- Fine-tuning pipeline
-- Additional backends (ONNX, Transformers, etc.)
-- Remote inference with sandboxing and auditing
-- Offline mode with strict security guardrails
+- Plugin Store for community extensions  
+- Additional backends (ONNX, MLC, Transformers)  
+- Model benchmarking and performance analysis tools  
+- Local fine-tuning pipeline (future milestone)  
+- Sandbox support for secure remote runtimes  
 
 ## License
-Strata is dual-licensed:
+Strata is licensed under the **GNU Affero General Public License (AGPLv3)**.  
+See the [LICENSE](LICENSE) and [NOTICE](NOTICE) files for details.
 
-- **Apache 2.0** for personal, research, and open-source use  
-- **Commercial license** for companies and organizations using Strata in internal systems, products, or services  
+---
 
-For commercial inquiries, contact: [your email goes here].
+© 2025 Jaden Stanley.
