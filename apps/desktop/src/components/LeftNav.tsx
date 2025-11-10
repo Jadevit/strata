@@ -27,80 +27,75 @@ export default function LeftNav({
 
   return (
     <aside
-      className={[
-        "w-14 shrink-0 border-r border-white/10 bg-[#0B0F1A]/95 backdrop-blur-sm",
-      ].join(" ")}
+      className="z-40 w-14 shrink-0 border-r border-white/10 bg-[#0B0F1A]/95 backdrop-blur-sm"
       aria-label="Primary"
     >
       <nav className="mt-2 flex h-full flex-col gap-1 px-1.5 pb-3">
         {ITEMS.map((it) => {
-  const isActive = it.key === active;
+          const isActive = it.key === active;
 
-  const base =
-    "relative grid place-items-center rounded-lg p-2 text-sm transition-all focus:outline-none focus:ring-4 focus:ring-white/10";
-  const enabled = isActive
-    ? "text-slate-100 bg-white/10"
-    : "text-slate-300 hover:bg-white/10 hover:shadow-md hover:shadow-white/10 hover:scale-[1.02]";
-  const disabled = "text-slate-400 opacity-60 cursor-not-allowed";
+          const base =
+            "group relative grid place-items-center rounded-lg p-2 text-sm transition-all focus:outline-none focus:ring-4 focus:ring-white/10";
+          const enabled = isActive
+            ? "text-slate-100 bg-white/10"
+            : "text-slate-300 hover:bg-white/10 hover:shadow-md hover:shadow-white/10 hover:scale-[1.02]";
+          const disabled = "text-slate-400 opacity-60 cursor-not-allowed";
 
-  return (
-    <div key={it.key} className="relative">
-      {/* make the BUTTON the peer */}
-      <button
-        className={`${base} ${it.disabled ? disabled : enabled} w-full text-left peer`}
-        aria-disabled={it.disabled || undefined}
-        aria-current={isActive ? "page" : undefined}
-        onClick={it.disabled ? undefined : it.onClick}
-        aria-label={it.label}
-        title={undefined}
-      >
-        <span className="text-[16px]" aria-hidden>
-          {it.icon}
-        </span>
-        {isActive && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full bg-sky-300/80"
-          />
-        )}
-      </button>
+          return (
+            <div key={it.key} className="relative">
+              {/* BUTTON is the peer */}
+              <button
+                className={`${base} ${it.disabled ? disabled : enabled} w-full text-left peer`}
+                aria-disabled={it.disabled || undefined}
+                aria-current={isActive ? "page" : undefined}
+                onClick={it.disabled ? undefined : it.onClick}
+                aria-label={it.label}
+              >
+                <span className="text-[16px]" aria-hidden>
+                  {it.icon}
+                </span>
+                {/* Active indicator bar (keep) */}
+                {isActive && (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute left-0 top-1/2 h-5 w-[2px] -translate-y-1/2 rounded-full bg-sky-300/80"
+                  />
+                )}
+              </button>
 
-      {/* sibling extrusion listens to the peer's hover/focus */}
-      <div
-        className={[
-          "pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2",
-          "transition-[width,opacity] duration-150 ease-out",
-          "w-0 opacity-0",
-          "peer-hover:w-44 peer-hover:opacity-100",
-          "peer-focus-visible:w-44 peer-focus-visible:opacity-100",
-          "peer-focus:w-44 peer-focus:opacity-100",
-        ].join(" ")}
-      >
-        <div
-          className={[
-            "flex h-9 items-center overflow-hidden rounded-r-xl border border-white/10 border-l-0 px-3",
-"backdrop-blur-[8px]",
-"bg-[linear-gradient(to_right,rgba(20,25,38,0.75),rgba(20,25,38,0.45),rgba(255,255,255,0.08))]",
-"text-sm font-medium text-slate-100",
-"shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]",
-            isActive ? "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" : "",
-          ].join(" ")}
-        >
-          <span className="whitespace-nowrap">
-            {it.disabled ? (
-              <>
-                {it.label}{" "}
-                <span className="align-super text-[10px] opacity-70">Soon™</span>
-              </>
-            ) : (
-              it.label
-            )}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-})}
+              {/* Extrusion: ONLY on hover (no focus variants so it never “sticks”) */}
+              <div
+                className={[
+                  "pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2",
+                  "transition-[width,opacity] duration-150 ease-out",
+                  "w-0 opacity-0",
+                  "peer-hover:w-44 peer-hover:opacity-100",
+                ].join(" ")}
+              >
+                <div
+                  className={[
+                    "flex h-9 items-center overflow-hidden rounded-r-xl border border-white/10 border-l-0 px-3",
+                    "backdrop-blur-[8px]",
+                    "bg-[linear-gradient(to_right,rgba(20,25,38,0.75),rgba(20,25,38,0.45),rgba(255,255,255,0.08))]",
+                    "text-sm font-medium text-slate-100",
+                    "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]",
+                    isActive ? "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]" : "",
+                  ].join(" ")}
+                >
+                  <span className="whitespace-nowrap">
+                    {it.disabled ? (
+                      <>
+                        {it.label} <span className="align-super text-[10px] opacity-70">Soon™</span>
+                      </>
+                    ) : (
+                      it.label
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </nav>
     </aside>
   );

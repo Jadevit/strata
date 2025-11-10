@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import Header from "../components/Header";
-import LeftNav from "../components/LeftNav";
-import ModelsRail from "../components/ModelsRail";
+import MainLayout from "../layouts/MainLayout";
 import ChatTranscript from "../components/ChatTranscript";
 import Composer from "../components/Composer";
-import ModelInfoDrawer from "../components/ModelInfoDrawer";
 import { useModels } from "../hooks/useModels";
 import { useModelMeta } from "../hooks/useModelMeta";
 import { useLLM } from "../hooks/useLLM";
@@ -28,7 +25,6 @@ export default function Chat() {
     setStreamingEnabled,
     sendMessage,
     stop,
-    newChat,
   } = useLLM(selectedModel?.id);
 
   // autoscroll on new messages
@@ -37,12 +33,10 @@ export default function Chat() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // open models rail
-  const openModelsRail = useCallback(() => {
+  const toggleModelsRail = useCallback(() => {
     setModelsOpen((v) => !v);
   }, []);
 
-  // when a model is picked, close the rail
   const handlePickModel = useCallback(
     (m: typeof models[number]) => {
       setSelectedModel(m);
@@ -78,52 +72,38 @@ export default function Chat() {
   }, [isGenerating, stop, setStreamingEnabled]);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-[#0B0F1A] text-slate-100">
-      {/* Header */}
-      <Header
-        selectedModel={selectedModel}
-        recent={recent}
-        onSelectModel={setSelectedModel}
-        onOpenInfo={() => setInfoOpen(true)}
-        onImportModel={importFromDialog}
+    <MainLayout
+      // left nav
+      leftNavActive="chat"
+      onOpenModels={toggleModelsRail}
+
+      // models rail
+      modelsRailOpen={modelsOpen}
+      models={models}
+      selectedModel={selectedModel}
+      onSelectModel={handlePickModel}
+      onImportModel={importFromDialog}
+
+      // info drawer
+      infoOpen={infoOpen}
+      onOpenInfo={() => setInfoOpen(true)}
+      onCloseInfo={() => setInfoOpen(false)}
+      meta={meta}
+      metaLoading={!!metaLoading}
+      metaError={metaError}
+
+      // optional: EmptyState handled by MainLayout if children are empty; Chat always renders content here
+      showEmpty={false}
+    >
+      <ChatTranscript messages={messages} endRef={chatEndRef} />
+      <Composer
+        value={input}
+        disabled={isGenerating}
+        isGenerating={isGenerating}
+        onChange={(v) => setInput(v)}
+        onSend={() => void sendMessage()}
+        onCancel={() => void stop()}
       />
-
-      <div className="flex flex-1 min-h-0">
-        {/* LeftNav (always visible) */}
-        <LeftNav active="chat" onOpenModels={openModelsRail} />
-
-        {/* Chat area */}
-        <div className="flex min-w-0 flex-1 min-h-0 flex-col relative">
-          <ChatTranscript messages={messages} endRef={chatEndRef} />
-          <Composer
-            value={input}
-            disabled={isGenerating}
-            isGenerating={isGenerating}
-            onChange={(v) => setInput(v)}
-            onSend={() => void sendMessage()}
-            onCancel={() => void stop()}
-          />
-        </div>
-
-        {/* Models Rail (slides out beside nav) */}
-        <ModelsRail
-          open={modelsOpen}
-          selectedModelId={selectedModel?.id ?? null}
-          models={models}
-          onPick={handlePickModel}
-          onImport={importFromDialog}
-        />
-
-        {/* Model Info Drawer */}
-        <ModelInfoDrawer
-          open={infoOpen}
-          onClose={() => setInfoOpen(false)}
-          selectedModel={selectedModel}
-          meta={meta}
-          metaLoading={!!metaLoading}
-          metaError={metaError}
-        />
-      </div>
-    </div>
+    </MainLayout>
   );
 }

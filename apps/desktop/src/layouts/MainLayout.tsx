@@ -7,7 +7,6 @@ import EmptyState from "../components/EmptyState";
 import type { ModelEntry, ModelMeta } from "../types";
 
 type MainLayoutProps = {
-  // main content (e.g. Chat page)
   children?: ReactNode;
 
   // LeftNav
@@ -58,25 +57,28 @@ export default function MainLayout({
       {/* Header */}
       <Header
         selectedModel={selectedModel}
-        recent={models} // reusing models array for recent for now
+        recent={models} // using full list as recent for now
         onSelectModel={onSelectModel}
         onOpenInfo={onOpenInfo}
         onImportModel={onImportModel}
       />
 
-      {/* Workspace */}
+      {/* Workspace row (under header) */}
       <div className="relative flex min-h-0 flex-1">
-        {/* Permanent LeftNav */}
+        {/* LeftNav stays on top of anything near it */}
         <div className="relative z-40">
           <LeftNav active={leftNavActive} onOpenModels={onOpenModels} />
         </div>
 
-        {/* Main content */}
+        {/* Content area */}
         <main className="relative min-w-0 flex-1 min-h-0 overflow-hidden">
           {renderEmpty ? <EmptyState /> : children}
         </main>
 
-        {/* Slide-out ModelsRail */}
+        {/* Slide-out ModelsRail: absolutely positioned inside this row.
+            - Anchored to the right edge of the nav (left: w-14)
+            - Lives UNDER the header because this row starts below header
+            - z-30 so nav icons (z-40) remain visible/clickable */}
         <ModelsRail
           open={modelsRailOpen}
           selectedModelId={selectedModel?.id ?? null}
@@ -85,7 +87,7 @@ export default function MainLayout({
           onImport={onImportModel}
         />
 
-        {/* Info Drawer */}
+        {/* Right-side info drawer */}
         <ModelInfoDrawer
           open={infoOpen}
           onClose={onCloseInfo}
